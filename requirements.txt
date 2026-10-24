@@ -1,0 +1,6 @@
+# Runtime deps for the dashboard server (vico_server / vico_signaling / vico_sdp / vico_api).
+# The headless aiortc client (vico_live.py) and the reverse-engineering tools need more
+# (aiortc, av, pylibsrtp, protobuf) but the server does not - the browser does the WebRTC.
+aiohttp==3.14.5
+websockets==17.3
+requests==2.34.2

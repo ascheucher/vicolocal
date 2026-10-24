@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Vicolocal</title>
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+        <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent2)"/>
+        </linearGradient></defs>
+        <rect x="4" y="4" width="40" height="40" rx="12" fill="url(#hg)"/>
+        <circle cx="24" cy="24" r="14.5" fill="none" stroke="var(--logo-ink)" stroke-width="1.6" opacity=".35"/>
+        <path d="M14.8 16.8 L24 33 L33.2 16.8" fill="none" stroke="var(--logo-ink)"
+              stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="24" cy="14.2" r="2.4" fill="var(--logo-ink)"/>
+      </svg>
+      <span class="wordmark">Vico<span class="accent">local</span></span>
+      <span class="sub">LAN camera feeds</span>
+    </div>
+    <div class="controls">
+      <button id="refresh" class="btn icon" title="Refresh cameras" aria-label="Refresh">&#x21bb;</button>
+      <div class="select-wrap">
+        <select id="theme" aria-label="Theme">
+          <option value="dark">Dark</option>
+          <option value="midnight">Midnight</option>
+          <option value="terminal">Terminal</option>
+          <option value="daylight">Daylight</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <p id="hint" class="hint">Drag tiles to reorder &middot; click to watch live</p>
+    <div id="grid" class="grid" aria-live="polite"></div>
+  </main>
+
+  <div id="stage" class="stage hidden" role="dialog" aria-modal="true">
+    <div class="stage-inner">
+      <div class="stage-head">
+        <div class="stage-title">
+          <span id="stage-name" class="stage-name">Camera</span>
+          <span id="stage-state" class="stage-state"><span class="livedot"></span>connecting&hellip;</span>
+        </div>
+        <div class="stage-actions">
+          <button id="zoom-reset" class="btn icon ghost" title="Reset zoom" aria-label="Reset zoom">&#x26f6;</button>
+          <button id="debug-toggle" class="btn icon ghost" title="Debug console" aria-label="Debug">&#x1f41e;</button>
+          <button id="stage-close" class="btn icon ghost" title="Close" aria-label="Close">&#x2715;</button>
+        </div>
+      </div>
+      <div class="stage-tabs">
+        <button class="tab active" data-tab="live">Live</button>
+        <button class="tab" data-tab="rec">Recordings</button>
+      </div>
+      <div id="battery-warn" class="warn hidden"></div>
+      <div id="video-wrap" class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="spinner" class="spinner"></div>
+        <div id="zoom-badge" class="zoom-badge hidden">1.0&times;</div>
+      </div>
+      <div id="clip-bar" class="clip-bar hidden">
+        <button id="clip-back" class="btn ghost sm">&#x2190; clips</button>
+        <span id="clip-meta" class="clip-meta"></span>
+        <a id="clip-dl" class="btn sm" href="#" download>&#x2b07; download</a>
+      </div>
+      <div id="rec-panel" class="rec-panel hidden"><div id="rec-list" class="rec-list"></div></div>
+      <section id="debug" class="debug hidden">
+        <div class="debug-head">
+          <span>Debug console</span>
+          <span>
+            <button id="debug-copy" class="btn ghost sm">copy</button>
+            <button id="debug-clear" class="btn ghost sm">clear</button>
+          </span>
+        </div>
+        <div id="debug-stats" class="debug-stats"></div>
+        <pre id="debug-log" class="debug-log"></pre>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/hls.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

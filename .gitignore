@@ -1,0 +1,26 @@
+# --- secrets / credentials (never commit) ---
+.vico.env
+.vico-token.json
+.env
+
+# --- captures: live tokens, home snapshots, recorded clips ---
+findings/
+*.log
+
+# --- vendor material, not ours to redistribute (APK, decompile, repackaging) ---
+apk/
+apk-patch/
+ref/
+
+# --- reverse-engineering scaffolding (device-specific; kept local) ---
+capture/
+
+# --- extracted protobuf: keep only the camera-interop schema in the repo ---
+proto/*.proto
+!proto/media_signaling.proto
+proto/*.desc
+
+# --- python ---
+.venv/
+__pycache__/
+*.pyc

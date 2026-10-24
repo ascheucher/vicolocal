@@ -1,0 +1,205 @@
+syntax = "proto2";
+
+package service_framework;
+
+import "service_define.proto";
+option java_package = "com.shijie.service_framework";
+
+enum SignalingMessageType {
+  MSG_TYPE_UNKNOWN = 0;
+  MSG_TYPE_SDP_OFFER = 1;
+  MSG_TYPE_SDP_ANSWER = 2;
+  MSG_TYPE_ICE_CANDIDATE = 3;
+  MSG_TYPE_RECONNECT_ICE_CANDIDATE = 4;
+  MSG_TYPE_SDP_OFFER_RESPONSE = 5;
+}
+
+enum SignalingSessionFailedReason {
+  SESSION_FAILED_UNKNOWN = 0;
+  SESSION_FAILED_WAKE_TIMEOUT = 1;
+  SESSION_FAILED_PEER_DORMANT = 2;
+}
+
+enum SdpType {
+  SDP_TYPE_UNKNOWN = 0;
+  SDP_TYPE_OFFER = 1;
+  SDP_TYPE_ANSWER = 2;
+}
+
+enum WebrtcDeliveryMode {
+  WEBRTC_DELIVERY_MODE_UNSPECIFIED = 0;
+  WEBRTC_DELIVERY_MODE_SERVER_WAKE_GATED = 1;
+  WEBRTC_DELIVERY_MODE_DEVICE_BUFFERED = 2;
+}
+
+message SdpPayload {
+  optional SdpType type = 1;
+  optional string sdp = 2;
+}
+
+message SdpOfferPayload {
+  optional string sdp = 1;
+}
+
+message SdpAnswerPayload {
+  optional string sdp = 1;
+}
+
+message IceCandidatePayload {
+  optional string candidate = 1;
+  optional string sdp_mid = 2;
+  optional int32 sdp_mline_index = 3;
+}
+
+message CompressedSdpOfferPayload {
+  optional string compressed = 1;
+}
+
+message CompressedSdpAnswerPayload {
+  optional string compressed = 1;
+}
+
+message IceServer {
+  optional string url = 1;
+  optional string username = 2;
+  optional string credential = 3;
+  optional string ip_address = 4;
+}
+
+message WebrtcDeliveryContext {
+  optional string sender_client_id = 1;
+  optional string session_id = 2;
+  optional WebrtcDeliveryMode mode = 3;
+}
+
+message WebrtcConfig {
+  optional int64 max_allocation_limit = 1;
+  optional int64 ttl = 2;
+  repeated IceServer ice_servers = 3;
+  optional int32 mtu = 4;
+  optional string serial_number = 5;
+  optional WebrtcDeliveryContext delivery_context = 6;
+}
+
+message SignalingContext {
+  optional string session_id = 1;
+  optional string sender_client_id = 2;
+  optional string recipient_client_id = 3;
+  optional string version = 4;
+}
+
+message WakeUpReq {
+}
+
+message WakeUpRsp {
+  optional DeviceStatus device_status = 1;
+}
+
+message TransmitReq {
+  optional SignalingContext ctx = 1;
+  optional SignalingMessageType message_type = 2;
+  optional string correlation_id = 3;
+  optional string mode = 4;
+  optional string viewer_type = 5;
+  optional int32 sdp_mode = 6;
+  optional string resolution = 7;
+  optional string sdp_session_id = 8;
+  optional int32 sdp_session_version = 9;
+  optional string ice_ufrag = 16;
+  optional string ice_pwd = 17;
+  optional string fingerprint_sha256 = 18;
+  optional uint64 audio_ssrc = 19;
+  optional string cname = 20;
+  optional uint64 video_ssrc0 = 21;
+  optional uint64 video_ssrc1 = 22;
+  optional int32 code = 23;
+  optional string reason = 24;
+  oneof payload {
+    SdpPayload sdp = 10;
+    IceCandidatePayload ice_candidate = 11;
+    SdpOfferPayload sdp_offer = 12;
+    SdpAnswerPayload sdp_answer = 13;
+    CompressedSdpOfferPayload compressed_sdp_offer = 14;
+    CompressedSdpAnswerPayload compressed_sdp_answer = 15;
+  }
+}
+
+message TransmitRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+}
+
+message JoinLiveReq {
+  optional SignalingContext ctx = 1;
+  optional string trace_id = 2;
+  optional string name = 3;
+  optional int32 support_rtc_connect_acceleration = 4;
+  optional string access_token = 5;
+}
+
+message JoinLiveRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+  optional DeviceStatus peer_status = 3;
+  optional int64 timestamp_ms = 4;
+  optional WebrtcConfig webrtc_config = 5;
+}
+
+message DeviceStatusReq {
+  optional SignalingContext ctx = 1;
+  optional DeviceStatus status = 2;
+  optional int64 timestamp_s = 3;
+}
+
+message DeviceStatusRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+}
+
+message ReportEventReq {
+  optional SignalingContext ctx = 1;
+  optional string data = 2;
+}
+
+message ReportEventRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+}
+
+message SignalingSessionFailedReq {
+  optional SignalingContext ctx = 1;
+  optional SignalingSessionFailedReason reason = 2;
+}
+
+message SignalingSessionFailedRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+}
+
+message CmdAckReq {
+  optional SignalingContext ctx = 1;
+  optional string id = 2;
+  optional int32 code = 3;
+  optional string message = 4;
+  optional string name = 5;
+  optional int32 time_s = 6;
+}
+
+message CmdAckRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+}
+
+message RetainedMsgAckReq {
+  optional SignalingContext ctx = 1;
+  optional string id = 2;
+  optional int32 code = 3;
+  optional string message = 4;
+  optional string name = 5;
+  optional int32 time_s = 6;
+}
+
+message RetainedMsgAckRsp {
+  optional int32 code = 1;
+  optional string message = 2;
+}

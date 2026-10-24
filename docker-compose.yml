@@ -1,0 +1,42 @@
+# Vicolocal dashboard behind Traefik -> https://cams.example.com (no ports for users).
+# The container needs only outbound internet (Vicohome cloud for tickets/thumbnails); the
+# browser does the camera media directly over the LAN.
+#
+#   docker compose up -d --build
+#
+# Credentials: copy .env.example to .env (gitignored) and fill in the Vicohome account creds.
+# compose substitutes them into the container as VICO_USER2 / VICO_PASS2. (Account 2 is the
+# shared/spare account; set VICO_ACCOUNT to switch.)
+
+services:
+  catcams:
+    build: .
+    image: vicolocal:latest
+    container_name: catcams
+    restart: unless-stopped
+    environment:
+      VICO_TITLE: "Cat Cams"
+      VICO_TAGLINE: "the cat cameras"
+      VICO_SIMPLE: "1"          # kid/kiosk mode (big tiles, no theme/debug chrome); drop for full UI
+      VICO_ACCOUNT: "2"
+      VICO_PORT: "8080"
+      VICO_USER2: ${VICO_USER2:?set VICO_USER2 in .env}
+      VICO_PASS2: ${VICO_PASS2:?set VICO_PASS2 in .env}
+    volumes:
+      - catcams-data:/data              # writable token cache (VICO_TOKEN_FILE)
+      # alternative to the env vars above: mount the creds file (add :Z on SELinux/podman)
+      # - ./.vico.env:/app/.vico.env:ro
+    networks: [traefik]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.catcams.rule=Host(`cams.example.com`)"
+      - "traefik.http.routers.catcams.entrypoints=websecure"
+      - "traefik.http.routers.catcams.tls.certresolver=letsencrypt"   # <-- set to your resolver name
+      - "traefik.http.services.catcams.loadbalancer.server.port=8080"
+
+volumes:
+  catcams-data:
+
+networks:
+  traefik:
+    external: true          # <-- your existing Traefik network name

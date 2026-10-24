@@ -1,0 +1,14 @@
+.venv/
+apk/
+apk-patch/
+findings/
+ref/
+proto/
+capture/
+*.log
+__pycache__/
+.git/
+.vico.env
+.vico-token.json
+vico_live.py
+vico_signaling.py.orig
