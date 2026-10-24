@@ -20,6 +20,8 @@ from aiohttp import WSMsgType, web
 from vico_api import VicoCloud
 from vico_signaling import CameraError, CameraLink
 
+__version__ = "0.1.0"
+
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 CACHE_TTL = 1800  # 30 min: device list + thumbnails

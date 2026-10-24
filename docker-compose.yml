@@ -2,7 +2,10 @@
 # The container needs only outbound internet (Vicohome cloud for tickets/thumbnails); the
 # browser does the camera media directly over the LAN.
 #
-#   docker compose up -d --build
+#   docker compose up -d
+#
+# This pulls the prebuilt image from GHCR. To build from source instead, comment out the
+# `image:` line below and uncomment `build: .`, then run `docker compose up -d --build`.
 #
 # Credentials: copy .env.example to .env (gitignored) and fill in the Vicohome account creds.
 # compose substitutes them into the container as VICO_USER2 / VICO_PASS2. (Account 2 is the
@@ -10,8 +13,8 @@
 
 services:
   catcams:
-    build: .
-    image: vicolocal:latest
+    image: ghcr.io/averagenative/vicolocal:latest
+    # build: .
     container_name: catcams
     restart: unless-stopped
     environment:
