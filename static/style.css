@@ -75,15 +75,16 @@ select { appearance: none; background: var(--card); color: var(--text); border: 
   border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); cursor: pointer;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   transition: transform .12s ease, box-shadow .2s, border-color .2s, opacity .2s; touch-action: pan-y; }
-body:not(.simple) .card { touch-action: none; }   /* full mode: reliable touch drag */
 .card:hover { transform: translateY(-3px); box-shadow: var(--glow); border-color: transparent; }
 .card.offline { opacity: .55; cursor: default; }
 .card.offline:hover { transform: none; box-shadow: var(--shadow); }
-.grid.reordering { cursor: grabbing; }
-.grid.reordering .card:not(.dragging):hover { transform: none; box-shadow: var(--shadow); border-color: var(--line); }
-.card.dragging { opacity: .95; transform: scale(1.04); box-shadow: 0 16px 36px rgba(0,0,0,.5);
-  z-index: 5; cursor: grabbing; }
-.card.drop-target { outline: 2px dashed var(--accent); outline-offset: -3px; }
+/* drag reorder: the lifted tile follows the pointer; the dashed slot is where it will land */
+html.tile-drag, html.tile-drag * { cursor: grabbing !important; -webkit-user-select: none; user-select: none; }
+html.tile-drag .card:not(.lifted):hover { transform: none; box-shadow: var(--shadow); border-color: var(--line); }
+.card.lifted { z-index: 30; transition: box-shadow .2s; box-shadow: 0 22px 50px rgba(0,0,0,.55); will-change: transform; }
+html.tile-drag .thumb .play { opacity: 0; }
+.card-slot { border: 2px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, transparent); }
 #sound-toggle.on { color: var(--accent); border-color: var(--accent); }
 
 .thumb { aspect-ratio: 16 / 9; width: 100%; background: var(--card2) center/cover no-repeat; position: relative; display: block; }
@@ -172,7 +173,7 @@ video { width: 100%; height: 100%; object-fit: contain; background: #000; displa
 .debug-log .cam { color: var(--accent2); } .debug-log .pc { color: var(--accent); } .debug-log .err { color: var(--danger); }
 
 /* ============ simple / kid mode (VICO_SIMPLE=1) ============ */
-body.simple .controls .select-wrap, body.simple #debug-toggle, body.simple .hint { display: none; }
+body.simple .controls .select-wrap, body.simple #debug-toggle { display: none; }
 body.simple .grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 20px; }
 body.simple .wordmark { font-size: 21px; }
 

@@ -89,63 +89,147 @@ function renderCard(cam) {
   return card;
 }
 
-// ---------- pointer-based drag reorder (full mode only; kid mode just taps) ----------
-function clearDropTargets() { for (const c of grid.children) c.classList.remove("drop-target"); }
-
-// Move `card` next to whichever other tile the pointer is closest to, choosing a
-// side by reading order (row below -> after, row above -> before, same row -> by x).
-function reorderTo(card, e) {
-  let best = null, bestD = Infinity, bestR = null;
-  for (const c of grid.children) {
-    if (c === card) continue;
-    const r = c.getBoundingClientRect();
-    const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
-    if (d < bestD) { bestD = d; best = c; bestR = r; }
-  }
-  clearDropTargets();
-  if (!best) return;
-  let after;
-  if (e.clientY > bestR.bottom) after = true;
-  else if (e.clientY < bestR.top) after = false;
-  else after = e.clientX > bestR.left + bestR.width / 2;
-  best.classList.add("drop-target");
-  grid.insertBefore(card, after ? best.nextSibling : best);
-}
+// ---------- drag reorder ----------
+// The tile lifts and follows the pointer, the other tiles slide aside to show where it will
+// land, and nothing is placed until it's let go (Escape puts it back). A mouse lifts the tile
+// as soon as it moves; touch, where a swipe has to scroll the page, presses and holds first,
+// like the phone home screen.
+const HOLD_MS = 450, MOVE_PX = 6, EDGE_PX = 80, SLIDE = { duration: 200, easing: "cubic-bezier(.2, .7, .3, 1)" };
+const coarsePointer = matchMedia("(pointer: coarse)").matches;
+$("#hint").innerHTML = (coarsePointer ? "Press and hold a tile to move it &middot; tap" : "Drag tiles to reorder &middot; click") + " to watch live";
+let press = null;    // pointer down on a tile: {card, id, x, y, cx, cy, mouse, holdT}
+let drag = null;     // tile lifted: {card, slot, w, h, ox, oy, home, slots, armed, raf}
+let settling = false;
 
 function attachDrag(card) {
-  let start = null, dragging = false;
   card.addEventListener("dragstart", (e) => e.preventDefault());  // no native text/img drag
+  card.addEventListener("contextmenu", (e) => { if (press) e.preventDefault(); });  // Android long-press menu
+  // once a tile is lifted, the finger moves it instead of scrolling the page
+  card.addEventListener("touchmove", (e) => { if (drag) e.preventDefault(); }, { passive: false });
   card.addEventListener("pointerdown", (e) => {
-    if (e.button != null && e.button !== 0) return;               // left button / touch only
-    start = { x: e.clientX, y: e.clientY, id: e.pointerId };
-    dragging = false;
+    if ((e.button != null && e.button !== 0) || press || settling) return;   // left button / touch only
+    press = { card, id: e.pointerId, x: e.clientX, y: e.clientY, cx: e.clientX, cy: e.clientY, mouse: e.pointerType === "mouse" };
+    if (!press.mouse) press.holdT = setTimeout(liftTile, HOLD_MS);
+    addEventListener("pointermove", onPressMove);
+    addEventListener("pointerup", onPressEnd);
+    addEventListener("pointercancel", onPressEnd);
   });
-  card.addEventListener("pointermove", (e) => {
-    if (!start || start.id !== e.pointerId) return;
-    if (!dragging) {
-      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 8) return;  // tap vs drag
-      if (document.body.classList.contains("simple")) { start = null; return; } // kid mode: no reorder
-      dragging = true;
-      grid.classList.add("reordering");
-      card.classList.add("dragging");
-      try { card.setPointerCapture(e.pointerId); } catch {}
-    }
-    e.preventDefault();
-    reorderTo(card, e);
-  });
-  const end = (e) => {
-    if (!start || start.id !== e.pointerId) return;
-    const wasDragging = dragging;
-    start = null; dragging = false;
-    card.classList.remove("dragging");
-    grid.classList.remove("reordering");
-    clearDropTargets();
-    if (wasDragging) { persistOrder(); return; }
-    openCamera(card._cam);   // tap: offline cameras open straight to Recordings
-  };
-  card.addEventListener("pointerup", end);
-  card.addEventListener("pointercancel", end);
 }
+
+function onPressMove(e) {
+  if (!press || press.id !== e.pointerId) return;
+  press.cx = e.clientX; press.cy = e.clientY;
+  if (!drag) {
+    if (Math.hypot(e.clientX - press.x, e.clientY - press.y) <= MOVE_PX) return;  // still a tap
+    if (!press.mouse) return endPress();   // moved before the hold: a scroll, not a drag
+    liftTile();
+  }
+  e.preventDefault();
+  followPointer();
+}
+
+function onPressEnd(e) {
+  if (!press || press.id !== e.pointerId) return;
+  const tap = !drag && e.type === "pointerup", card = press.card;
+  endPress();
+  if (tap) openCamera(card._cam);   // offline cameras open straight to Recordings
+}
+
+function endPress() {
+  clearTimeout(press.holdT);
+  removeEventListener("pointermove", onPressMove);
+  removeEventListener("pointerup", onPressEnd);
+  removeEventListener("pointercancel", onPressEnd);
+  press = null;
+  if (drag) dropTile();
+}
+
+// Pin the tile to the window where it was drawn, leaving a dashed slot in its grid cell.
+function liftTile() {
+  const card = press.card, r = card.getBoundingClientRect();
+  const slot = document.createElement("div");
+  slot.className = "card-slot";
+  slot.style.height = r.height + "px";
+  drag = { card, slot, w: r.width, h: r.height, ox: press.x - r.left, oy: press.y - r.top,
+           home: card.nextElementSibling, armed: false, raf: 0 };
+  grid.insertBefore(slot, card);
+  Object.assign(card.style, { position: "fixed", left: "0", top: "0", margin: "0", width: r.width + "px", height: r.height + "px" });
+  card.classList.add("lifted");
+  document.documentElement.classList.add("tile-drag");
+  measureSlots();
+  followPointer();
+  drag.raf = requestAnimationFrame(edgeScroll);
+  try { navigator.vibrate(12); } catch {}
+}
+
+// Where each grid cell sits on the page. Read only while nothing is mid-slide, so a tile
+// sliding past the lifted one can't trigger another move.
+function measureSlots() {
+  drag.slots = [...grid.children].filter((el) => el !== drag.card).map((el) => {
+    const r = el.getBoundingClientRect();
+    return { el, left: r.left + scrollX, top: r.top + scrollY, right: r.right + scrollX, bottom: r.bottom + scrollY };
+  });
+}
+
+function followPointer() {
+  const x = press.cx - drag.ox, y = press.cy - drag.oy;
+  drag.card.style.transform = `translate3d(${x}px, ${y}px, 0) scale(1.03)`;
+  // the lifted tile's centre picks the cell, not the pointer: a tile grabbed by its edge
+  // shouldn't swap the moment the pointer crosses into the next one
+  const cx = x + drag.w / 2 + scrollX, cy = y + drag.h / 2 + scrollY;
+  const hit = drag.slots.find((s) => cx >= s.left && cx <= s.right && cy >= s.top && cy <= s.bottom);
+  if (!hit || hit.el === drag.slot) return;
+  const after = drag.slot.compareDocumentPosition(hit.el) & Node.DOCUMENT_POSITION_FOLLOWING;
+  moveSlot(after ? hit.el.nextSibling : hit.el);
+}
+
+// Move the slot, sliding each tile it displaces from where it was drawn to its new cell.
+function moveSlot(before) {
+  const tiles = drag.slots.map((s) => s.el).filter((el) => el !== drag.slot);
+  const from = tiles.map((el) => el.getBoundingClientRect());
+  for (const el of tiles) for (const a of el.getAnimations()) a.cancel();
+  grid.insertBefore(drag.slot, before);
+  measureSlots();
+  tiles.forEach((el, i) => {
+    const to = el.getBoundingClientRect(), dx = from[i].left - to.left, dy = from[i].top - to.top;
+    if (dx || dy) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], SLIDE);
+  });
+}
+
+// A phone shows only a few tiles: while the pointer rests near the top or bottom edge, scroll
+// the page under the lifted tile. It arms once the pointer has been away from the edge, so
+// lifting a tile that sits low on the screen doesn't set the page running.
+function edgeScroll() {
+  if (!drag) return;
+  drag.raf = requestAnimationFrame(edgeScroll);
+  const y = press.cy, h = innerHeight;
+  const dir = y < EDGE_PX ? -1 : y > h - EDGE_PX ? 1 : 0;
+  if (!dir) { drag.armed = true; return; }
+  if (!drag.armed) return;
+  const past = dir < 0 ? EDGE_PX - y : y - (h - EDGE_PX), before = scrollY;
+  scrollBy(0, dir * Math.ceil(16 * Math.min(1, past / EDGE_PX)));
+  if (scrollY !== before) followPointer();
+}
+
+// Glide the tile into its slot, then put it back in the grid there.
+function dropTile() {
+  const { card, slot } = drag, to = slot.getBoundingClientRect(), from = card.style.transform;
+  cancelAnimationFrame(drag.raf);
+  drag = null; settling = true;
+  document.documentElement.classList.remove("tile-drag");
+  card.style.transform = `translate3d(${to.left}px, ${to.top}px, 0)`;
+  const glide = card.animate([{ transform: from }, { transform: card.style.transform }], SLIDE);
+  glide.onfinish = glide.oncancel = () => {
+    grid.insertBefore(card, slot);
+    slot.remove();
+    card.removeAttribute("style");
+    card.classList.remove("lifted");
+    settling = false;
+    persistOrder();
+  };
+}
+
+addEventListener("keydown", (e) => { if (e.key === "Escape" && drag) { moveSlot(drag.home); endPress(); } });
 
 // ---------- zoom / pan on the video ----------
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
@@ -441,4 +525,4 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#sta
 
 loadConfig();
 loadCameras(false);
-setInterval(() => { if (!session) loadCameras(false); }, 30 * 60 * 1000);
+setInterval(() => { if (!session && !press && !settling) loadCameras(false); }, 30 * 60 * 1000);
