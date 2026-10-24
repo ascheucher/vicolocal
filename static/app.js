@@ -204,6 +204,32 @@ function setState(text, live) {
   el.classList.toggle("live", !!live);
 }
 
+// ---------- per-camera live audio ----------
+// Sound is off by default (quiet, autoplay-friendly) and remembered per camera.
+function soundPref(serial) { return LS.get("vsound:" + serial) === "1"; }
+function updateSoundBtn(on, show) {
+  const b = $("#sound-toggle");
+  b.classList.toggle("hidden", !show);
+  b.classList.toggle("on", !!on);
+  b.innerHTML = on ? "&#x1f50a;" : "&#x1f507;";   // 🔊 / 🔇
+  b.title = on ? "Sound on" : "Sound off";
+}
+function applySound(cam) {
+  if (!cam) return;
+  const on = soundPref(cam.serial);
+  const vid = $("#video");
+  vid.muted = !on;
+  if (on) vid.play().catch(() => {});
+  updateSoundBtn(on, true);
+}
+function toggleSound() {
+  if (!currentCam) return;
+  const on = !soundPref(currentCam.serial);
+  LS.set("vsound:" + currentCam.serial, on ? "1" : "0");
+  applySound(currentCam);
+  toast(on ? "Sound on — " + currentCam.name : "Sound muted");
+}
+
 let currentCam = null, hls = null;
 
 function openCamera(cam) {
@@ -222,9 +248,10 @@ function setTab(tab) {
     $("#rec-panel").classList.add("hidden"); $("#clip-bar").classList.add("hidden");
     $("#video-wrap").classList.remove("hidden");
     if (currentCam.online) startLive(currentCam);
-    else { $("#video-wrap").classList.add("hidden"); $("#spinner").classList.add("hidden"); setState("offline — recordings only", false); }
+    else { $("#video-wrap").classList.add("hidden"); $("#spinner").classList.add("hidden"); updateSoundBtn(false, false); setState("offline — recordings only", false); }
   } else {
     closeStream(); stopClip();
+    updateSoundBtn(false, false);
     $("#video-wrap").classList.add("hidden"); $("#battery-warn").classList.add("hidden"); $("#clip-bar").classList.add("hidden");
     $("#rec-panel").classList.remove("hidden");
     setState("recordings", false);
@@ -237,6 +264,7 @@ async function startLive(cam) {
   $("#debug-log").textContent = ""; $("#debug-stats").textContent = "";
   $("#spinner").classList.remove("hidden");
   const vid = $("#video"); vid.srcObject = null; vid.controls = false; vid.muted = true;
+  updateSoundBtn(soundPref(cam.serial), true);   // show sound toggle for this camera
   zoomer.reset();
   setState("waking camera…", false);
 
@@ -264,8 +292,16 @@ async function startLive(cam) {
   pc.createDataChannel("dataChannel");
 
   pc.ontrack = (e) => {
+    const vid = $("#video");
+    // Collect audio + video into one stream we control, so sound plays when unmuted.
+    if (!session.remoteStream) session.remoteStream = new MediaStream();
+    session.remoteStream.addTrack(e.track);
+    vid.srcObject = session.remoteStream;
+    dbg("pc", "track " + e.track.kind);
     if (e.track.kind === "video") {
-      $("#video").srcObject = e.streams[0]; $("#spinner").classList.add("hidden"); setState("live", true);
+      $("#spinner").classList.add("hidden"); setState("live", true);
+      applySound(currentCam);            // honor this camera's saved sound setting
+      vid.play().catch(() => {});
     }
   };
   pc.onicecandidate = (e) => {
@@ -394,6 +430,7 @@ $("#clip-back").addEventListener("click", () => setTab("rec"));
 $("#stage-close").addEventListener("click", closeStage);
 $("#stage").addEventListener("click", (e) => { if (e.target.id === "stage") closeStage(); });
 $("#zoom-reset").addEventListener("click", () => zoomer && zoomer.reset());
+$("#sound-toggle").addEventListener("click", toggleSound);
 $("#debug-toggle").addEventListener("click", () => $("#debug").classList.toggle("hidden"));
 $("#debug-clear").addEventListener("click", () => { $("#debug-log").textContent = ""; });
 $("#debug-copy").addEventListener("click", async () => {

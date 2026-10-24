@@ -9,6 +9,7 @@ websocket per open stream (see CameraLink in vico_signaling.py).
 """
 import argparse
 import asyncio
+import html
 import json
 import os
 import time
@@ -34,6 +35,10 @@ CONFIG = {
     "simple": os.environ.get("VICO_SIMPLE", "") in ("1", "true", "yes", "on"),  # kid/kiosk mode
     "batteryWarn": os.environ.get("VICO_BATTERY_WARN", "1") not in ("0", "false", "no", "off"),
 }
+
+# Cache-busting token for CSS/JS/icons; changes each container start unless pinned via env
+# (so a browser like the Fire's doesn't keep serving a stale title/favicon after a redeploy).
+ASSET_V = os.environ.get("VICO_ASSET_V") or str(int(time.time()))
 
 
 class Catalog:
@@ -205,13 +210,56 @@ async def ws_stream(request):
     return ws
 
 
+_index_html = None
+
+
+def render_index():
+    """index.html with the configured brand as the <title> and a cache-bust token,
+    so bookmarks / home-screen shortcuts pick up the real name (e.g. "Cat Cams")."""
+    global _index_html
+    if _index_html is None:
+        tpl = (STATIC / "index.html").read_text(encoding="utf-8")
+        _index_html = tpl.replace("__BRAND__", html.escape(CONFIG["brand"])).replace("__V__", ASSET_V)
+    return _index_html
+
+
 async def index(request):
-    return web.FileResponse(STATIC / "index.html")
+    return web.Response(text=render_index(), content_type="text/html")
+
+
+async def manifest(request):
+    """Web app manifest so Android/Fire "Add to Home Screen" uses the brand name + icon."""
+    return web.json_response({
+        "name": CONFIG["brand"],
+        "short_name": CONFIG["brand"],
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#0b0f14",
+        "theme_color": "#0b0f14",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/favicon.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+    }, content_type="application/manifest+json")
+
+
+async def favicon(request):
+    return web.FileResponse(STATIC / "favicon.ico")
+
+
+async def apple_touch_icon(request):
+    return web.FileResponse(STATIC / "apple-touch-icon.png")
 
 
 def make_app():
     app = web.Application()
     app.router.add_get("/", index)
+    app.router.add_get("/manifest.webmanifest", manifest)
+    app.router.add_get("/favicon.ico", favicon)              # Fire/Silk request these at the root
+    app.router.add_get("/apple-touch-icon.png", apple_touch_icon)
+    app.router.add_get("/apple-touch-icon-precomposed.png", apple_touch_icon)
     app.router.add_get("/api/config", api_config)
     app.router.add_get("/api/cameras", api_cameras)
     app.router.add_get("/api/clips", api_clips)

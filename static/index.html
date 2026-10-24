@@ -3,9 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>Vicolocal</title>
-  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css">
+  <title>__BRAND__</title>
+  <meta name="theme-color" content="#0b0f14">
+  <meta name="color-scheme" content="dark light">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="__BRAND__">
+  <meta name="application-name" content="__BRAND__">
+  <link rel="icon" href="/favicon.ico?v=__V__" sizes="any">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=__V__">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png?v=__V__">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=__V__">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/style.css?v=__V__">
 </head>
 <body>
   <header class="topbar">
@@ -49,6 +60,7 @@
           <span id="stage-state" class="stage-state"><span class="livedot"></span>connecting&hellip;</span>
         </div>
         <div class="stage-actions">
+          <button id="sound-toggle" class="btn icon ghost hidden" title="Sound on/off" aria-label="Toggle sound">&#x1f507;</button>
           <button id="zoom-reset" class="btn icon ghost" title="Reset zoom" aria-label="Reset zoom">&#x26f6;</button>
           <button id="debug-toggle" class="btn icon ghost" title="Debug console" aria-label="Debug">&#x1f41e;</button>
           <button id="stage-close" class="btn icon ghost" title="Close" aria-label="Close">&#x2715;</button>
@@ -86,6 +98,6 @@
 
   <div id="toast" class="toast hidden"></div>
   <script src="/static/hls.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=__V__"></script>
 </body>
 </html>
