@@ -89,40 +89,62 @@ function renderCard(cam) {
   return card;
 }
 
-// ---------- pointer-based drag reorder (works on touch + mouse) ----------
+// ---------- pointer-based drag reorder (full mode only; kid mode just taps) ----------
+function clearDropTargets() { for (const c of grid.children) c.classList.remove("drop-target"); }
+
+// Move `card` next to whichever other tile the pointer is closest to, choosing a
+// side by reading order (row below -> after, row above -> before, same row -> by x).
+function reorderTo(card, e) {
+  let best = null, bestD = Infinity, bestR = null;
+  for (const c of grid.children) {
+    if (c === card) continue;
+    const r = c.getBoundingClientRect();
+    const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+    if (d < bestD) { bestD = d; best = c; bestR = r; }
+  }
+  clearDropTargets();
+  if (!best) return;
+  let after;
+  if (e.clientY > bestR.bottom) after = true;
+  else if (e.clientY < bestR.top) after = false;
+  else after = e.clientX > bestR.left + bestR.width / 2;
+  best.classList.add("drop-target");
+  grid.insertBefore(card, after ? best.nextSibling : best);
+}
+
 function attachDrag(card) {
   let start = null, dragging = false;
+  card.addEventListener("dragstart", (e) => e.preventDefault());  // no native text/img drag
   card.addEventListener("pointerdown", (e) => {
-    if (e.button != null && e.button !== 0) return;
+    if (e.button != null && e.button !== 0) return;               // left button / touch only
     start = { x: e.clientX, y: e.clientY, id: e.pointerId };
     dragging = false;
   });
   card.addEventListener("pointermove", (e) => {
     if (!start || start.id !== e.pointerId) return;
-    if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) {
-      dragging = true; card.classList.add("dragging");
+    if (!dragging) {
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 8) return;  // tap vs drag
+      if (document.body.classList.contains("simple")) { start = null; return; } // kid mode: no reorder
+      dragging = true;
+      grid.classList.add("reordering");
+      card.classList.add("dragging");
       try { card.setPointerCapture(e.pointerId); } catch {}
     }
-    if (dragging) {
-      card.style.pointerEvents = "none";
-      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest(".card");
-      card.style.pointerEvents = "";
-      if (over && over !== card && over.parentElement === grid) {
-        const rect = over.getBoundingClientRect();
-        const after = e.clientY > rect.top + rect.height / 2;
-        grid.insertBefore(card, after ? over.nextSibling : over);
-      }
-    }
+    e.preventDefault();
+    reorderTo(card, e);
   });
   const end = (e) => {
     if (!start || start.id !== e.pointerId) return;
     const wasDragging = dragging;
-    card.classList.remove("dragging"); start = null; dragging = false;
+    start = null; dragging = false;
+    card.classList.remove("dragging");
+    grid.classList.remove("reordering");
+    clearDropTargets();
     if (wasDragging) { persistOrder(); return; }
-    openCamera(card._cam);   // offline cameras open straight to Recordings
+    openCamera(card._cam);   // tap: offline cameras open straight to Recordings
   };
   card.addEventListener("pointerup", end);
-  card.addEventListener("pointercancel", () => { card.classList.remove("dragging"); start = null; dragging = false; });
+  card.addEventListener("pointercancel", end);
 }
 
 // ---------- zoom / pan on the video ----------

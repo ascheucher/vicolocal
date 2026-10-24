@@ -73,11 +73,16 @@ select { appearance: none; background: var(--card); color: var(--text); border: 
 
 .card { position: relative; background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); cursor: pointer;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   transition: transform .12s ease, box-shadow .2s, border-color .2s, opacity .2s; touch-action: pan-y; }
+body:not(.simple) .card { touch-action: none; }   /* full mode: reliable touch drag */
 .card:hover { transform: translateY(-3px); box-shadow: var(--glow); border-color: transparent; }
 .card.offline { opacity: .55; cursor: default; }
 .card.offline:hover { transform: none; box-shadow: var(--shadow); }
-.card.dragging { opacity: .4; transform: scale(.97); }
+.grid.reordering { cursor: grabbing; }
+.grid.reordering .card:not(.dragging):hover { transform: none; box-shadow: var(--shadow); border-color: var(--line); }
+.card.dragging { opacity: .95; transform: scale(1.04); box-shadow: 0 16px 36px rgba(0,0,0,.5);
+  z-index: 5; cursor: grabbing; }
 .card.drop-target { outline: 2px dashed var(--accent); outline-offset: -3px; }
 
 .thumb { aspect-ratio: 16 / 9; width: 100%; background: var(--card2) center/cover no-repeat; position: relative; display: block; }
