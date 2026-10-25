@@ -4,9 +4,12 @@ The browser does the actual WebRTC (DTLS/SRTP/media) directly with the camera ov
 this class only brokers signaling: it gets a live-view ticket, speaks the camera's A4x
 websocket protocol, compresses the browser's offer into the camera's "KISS" form, and
 decompresses the camera's answer back to standard SDP. No media touches the server.
+Cameras whose deviceSupport lacks supportRtcConnectAcceleration (older firmware) ignore the
+compressed offer, so for them (accel=False) the offer and answer go as plain SDP, as the app does.
 
 Flow (see vico_live.py / the decompiled player for provenance):
-    connect()          ticket -> wss AUTH -> JOIN_LIVE(accessToken, accel=1) -> PEER_IN
+    connect()          ticket -> wss AUTH -> JOIN_LIVE(accessToken, accel) -> PEER_IN, or (accel)
+                       JOIN_LIVE_RESPONSE code 0 when the camera is already awake
     negotiate(offer)   compress offer -> TRANSMIT SDP_OFFER(0.0.2) -> wait SDP_ANSWER -> decompress
     add_browser_candidate(...)   -> TRANSMIT ICE_CANDIDATE
     on_camera_candidate(cb)      <- camera's ICE candidates (standard candidate dicts)
@@ -21,7 +24,7 @@ from urllib.parse import urlparse
 import websockets
 
 from vico_api import VicoCloud
-from vico_sdp import compress_offer, decompress_answer
+from vico_sdp import compress_offer, decompress_answer, slim_offer
 
 
 class CameraError(Exception):
@@ -29,9 +32,10 @@ class CameraError(Exception):
 
 
 class CameraLink:
-    def __init__(self, serial: str, account: str = "2", on_log=None):
+    def __init__(self, serial: str, account: str = "2", on_log=None, accel: bool = True):
         self.serial = serial
         self.account = account
+        self.accel = accel             # camera supports RTC connect acceleration (compressed SDP)
         self._log = on_log or (lambda m: None)
         self.ws = None
         self._reader = None
@@ -69,7 +73,7 @@ class CameraLink:
                           "role": data.get("role") or "viewer", "name": self._uid,
                           "traceId": data.get("traceId") or f"trace-{int(time.time() * 1000)}",
                           "traceparent": f"00-{os.urandom(16).hex()}-{os.urandom(8).hex()}-01",
-                          "recipientClientId": self.serial, "supportRtcConnectAcceleration": 1,
+                          "recipientClientId": self.serial, "supportRtcConnectAcceleration": int(self.accel),
                           "accessToken": data["accessToken"]})
         try:
             await asyncio.wait_for(self._peer_in.wait(), timeout=wake_timeout)
@@ -77,15 +81,20 @@ class CameraLink:
             raise CameraError("camera did not join (PEER_IN) in time - it may be offline or busy")
 
     async def negotiate(self, offer_sdp: str, timeout: float = 15.0) -> str:
-        """Send the browser's offer (compressed) and return the camera's answer SDP."""
+        """Send the browser's offer and return the camera's answer SDP."""
         self._answer = asyncio.get_running_loop().create_future()
-        comp = compress_offer(offer_sdp)
+        if self.accel:
+            payload, version = {"type": "offer", "sdp": compress_offer(offer_sdp)}, "0.0.2"
+        else:
+            payload = base64.b64encode(json.dumps({"type": "offer", "sdp": slim_offer(offer_sdp)},
+                                                  separators=(",", ":")).encode()).decode()
+            version = "0.0.1"
         await self._send({"method": "TRANSMIT", "messageType": "SDP_OFFER",
-                          "messagePayload": {"type": "offer", "sdp": comp},
+                          "messagePayload": payload,
                           "recipientClientId": self.serial, "senderClientId": self._uid,
                           "sessionId": self._session_id, "viewerType": "a4x_sdk",
-                          "resolution": "auto", "version": "0.0.2", "sdpMode": 0})
-        self.log("sent compressed offer")
+                          "resolution": "auto", "version": version, "sdpMode": 0})
+        self.log(f"sent {'compressed' if self.accel else 'plain'} offer")
         try:
             return await asyncio.wait_for(self._answer, timeout=timeout)
         except asyncio.TimeoutError:
@@ -148,6 +157,11 @@ class CameraLink:
             self.log(f"AUTH code={msg.get('code')}")
         elif method == "JOIN_LIVE_RESPONSE":
             self.log(f"JOIN_LIVE code={msg.get('code')} {msg.get('message')}")
+            # code 0: the camera is already awake. With RTC connect acceleration (which JOIN_LIVE
+            # asks for) the app offers right away instead of waiting for PEER_IN, and the newer
+            # signal servers (ticket kissTarget "v2") never send PEER_IN for an awake camera.
+            if msg.get("code") == 0 and self.accel:
+                self._peer_in.set()
         elif method == "WEBRTC_CONFIG":
             self.ice_servers = msg.get("iceServers", self.ice_servers)
         elif method == "PEER_IN":

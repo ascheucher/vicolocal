@@ -112,6 +112,62 @@ def _rtx_for(m: Media, pt: int):
     return None
 
 
+# ----------------------------- slim plain offer -----------------------------
+SLIM_AUDIO = {"opus", "PCMU", "PCMA"}
+SLIM_EXT = ("sdes:mid", "abs-send-time", "ssrc-audio-level")
+SLIM_DROP = tuple("a=" + a for a in ("extmap-allow-mixed", "rtcp-xr:", "rtcp-rsize", "ice-options:"))
+
+
+def slim_offer(sdp: str) -> str:
+    """A browser offer cut down for cameras that take plain SDP (no RTC connect acceleration).
+
+    Their parser drops the session on Chrome's full offer (34 video payload types, a dozen header
+    extensions), so keep only opus/PCMU/PCMA audio, one H264 profile (constrained baseline,
+    packetization-mode 1, else the first H264) with its rtx, and the mid / abs-send-time /
+    audio-level extensions. Payload types and extension ids stay as the browser chose them, so
+    the camera's answer still matches the browser's own offer.
+    """
+    sections = [[]]
+    for line in sdp.splitlines():
+        if line.startswith("m="):
+            sections.append([])
+        sections[-1].append(line)
+    out = []
+    for sec in sections:
+        keep = _slim_payloads(sec) if sec and sec[0].startswith(("m=audio", "m=video")) else None
+        for line in sec:
+            if (line.startswith(SLIM_DROP) or (line.startswith("a=ssrc:") and " msid:" in line)
+                    or (line.startswith("a=extmap:") and not any(e in line for e in SLIM_EXT))):
+                continue
+            if keep is not None:
+                if line.startswith("m="):
+                    f = line.split()
+                    line = " ".join(f[:3] + [pt for pt in f[3:] if pt in keep])
+                elif (line.startswith(("a=rtpmap:", "a=fmtp:", "a=rtcp-fb:"))
+                      and line.split(":", 1)[1].split()[0] not in keep):
+                    continue
+            out.append(line)
+    return "\r\n".join(out) + "\r\n"
+
+
+def _slim_payloads(sec):
+    """Payload types to keep in one audio/video section (see slim_offer)."""
+    pts, rtpmap, fmtp = sec[0].split()[3:], {}, {}
+    for line in sec:
+        if line.startswith(("a=rtpmap:", "a=fmtp:")) and " " in line:
+            pt, val = line.split(":", 1)[1].split(" ", 1)
+            if line.startswith("a=rtpmap:"):
+                rtpmap[pt] = val.split("/")[0]
+            else:
+                fmtp[pt] = val.split(";")
+    if sec[0].startswith("m=audio"):
+        return {pt for pt in pts if rtpmap.get(pt) in SLIM_AUDIO}
+    h264 = [pt for pt in pts if rtpmap.get(pt) == "H264"]
+    best = next((pt for pt in h264 if {"packetization-mode=1", "profile-level-id=42e01f"} <= set(fmtp.get(pt, []))),
+                h264[0] if h264 else None)
+    return {best} | {pt for pt in pts if rtpmap.get(pt) == "rtx" and f"apt={best}" in fmtp.get(pt, [])} if best else set()
+
+
 # ----------------------------- compress offer -----------------------------
 def compress_offer(sdp: str) -> dict:
     sess, medias = parse_sdp(sdp)

@@ -68,6 +68,14 @@ class Catalog:
             pass
         self._at = time.time()
 
+    def accel(self, serial):
+        """Whether the camera takes the compressed (RTC connect acceleration) offer; older
+        firmware doesn't list it and only answers a plain one. Unknown cameras get compressed."""
+        d = next((d for d in self._devices if d.get("serialNumber") == serial), None)
+        if d is None:
+            return True
+        return ((d.get("deviceSupport") or {}).get("supportRtcConnectAcceleration") or 0) >= 1
+
     def view(self):
         """Public shape for the UI (no tokens/secrets)."""
         out = []
@@ -170,7 +178,12 @@ async def ws_stream(request):
     serial = request.match_info["serial"]
     ws = web.WebSocketResponse(heartbeat=20)
     await ws.prepare(request)
-    link = CameraLink(serial, account=ACCOUNT, on_log=lambda m: print(m, flush=True))
+    try:
+        await catalog.get()
+    except Exception as e:  # noqa: BLE001
+        print(f"vico: camera list failed: {e}", flush=True)
+    link = CameraLink(serial, account=ACCOUNT, on_log=lambda m: print(m, flush=True),
+                      accel=catalog.accel(serial))
 
     async def to_browser(obj):
         if not ws.closed:

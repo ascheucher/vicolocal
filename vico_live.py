@@ -279,6 +279,10 @@ async def run(serial: str, seconds: float, relay: bool, iface_ip: str = None, ta
                             "accessToken": data["accessToken"]})
             elif method == "JOIN_LIVE_RESPONSE":
                 log(f"JOIN_LIVE code={msg.get('code')} {msg.get('message')}")
+                # code 0: the camera is already awake, so with RTC connect acceleration offer now;
+                # the newer (kissTarget "v2") signal servers never send PEER_IN for it
+                if msg.get("code") == 0 and not plain:
+                    await on_message({"method": "PEER_IN"})
             elif method == "PEER_IN" and not offered:
                 offered = True
                 log("camera joined (PEER_IN); creating offer")
