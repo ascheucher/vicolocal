@@ -12,6 +12,11 @@ media). This project is a tiny signaling bridge plus a dashboard that does exact
 ## Features
 
 - **Live LAN video** — click a camera, the browser does WebRTC straight to it over the LAN.
+- **Camera controls in live view** — **pan/tilt** arrows (hold to keep moving; arrow keys work
+  too), the **white light**, and **talk** through the camera's speaker (tap to start and stop,
+  or hold while you speak).
+- **MagicPix** — brightens the picture when it's dark (night, shade), like the app's MagicPix.
+  It runs in your browser, so it costs the camera nothing; it's remembered per camera.
 - **Recordings** — browse the cloud event clips (motion), play them in-page (HLS), and
   **download** them as mp4.
 - **Snapshot tiles** refreshed from the cloud (~every 30 min) at **no battery cost**.
@@ -31,7 +36,10 @@ media). This project is a tiny signaling bridge plus a dashboard that does exact
     └──────────────────────  WebRTC media, peer-to-peer over the LAN  ─────────────────────────────┘
 ```
 
-The server never touches the video. It fetches a per-view ticket, speaks the camera's
+The server never touches the video. Camera controls don't touch it either: pan/tilt and the
+white light are commands the browser sends straight to the camera on the WebRTC data channel
+(JSON, wrapped in the camera's small binary "SCP" frame), and talking swaps your microphone into
+the audio track the camera already receives. It fetches a per-view ticket, speaks the camera's
 compact ("KISS") signaling protocol, and translates the browser's standard WebRTC offer/answer
 to and from it. See [`vico_sdp.py`](vico_sdp.py) (the SDP codec),
 [`vico_signaling.py`](vico_signaling.py) (the camera link), and
@@ -41,7 +49,9 @@ to and from it. See [`vico_sdp.py`](vico_sdp.py) (the SDP codec),
 
 Don't point this at your main Vicohome account. Make a **separate account that only has
 *shared* (view) access to the cameras** — then the dashboard can't change any camera
-settings, and running it won't sign your phone out of your main account.
+settings, and running it won't sign your phone out of your main account. A shared account can
+still use the live controls (pan/tilt, light, talk), the same as a shared user in the app; set
+`VICO_CONTROLS=0` to hide them.
 
 1. Create a second Vicohome account (any email) in the app.
 2. From your **main** account, **share each camera** to the second account: in the Vicohome
@@ -87,6 +97,7 @@ the same network as the cameras** (or you'll fall back to the cloud TURN relay).
 | `VICO_ACCENT` / `VICO_ACCENT2` | — | override accent colors |
 | `VICO_SIMPLE` | off | kid/kiosk mode (big tiles, no theme/debug chrome) |
 | `VICO_BATTERY_WARN` | on | show the on-battery streaming warning |
+| `VICO_CONTROLS` | on | live-view controls: pan/tilt, white light, talk (MagicPix is always offered) |
 | `VICO_HOST` / `VICO_PORT` | `0.0.0.0` / `8080` | bind address/port |
 
 ## Notes & limits
@@ -94,6 +105,11 @@ the same network as the cameras** (or you'll fall back to the cloud TURN relay).
 - Battery/solar cameras are woken on demand and stop after a short idle — live view is meant
   to be opened per-click, not left running.
 - A camera that's in a bad/half-asleep state can refuse a session; just retry.
+- Pan/tilt needs a few seconds after the camera wakes before the motor answers; the page tells
+  you if you're early. The white light turns off when you close the live view (it drains the
+  battery).
+- **Talk needs HTTPS** (browsers only give the microphone to secure pages), so use it through
+  the Traefik/HTTPS address, not `http://<lan-ip>:8080`.
 - Secrets never belong in the repo: `.vico.env`, `.vico-token.json`, `.env`, and the `findings/`
   captures (which contain tokens and snapshots of your home) are gitignored.
 

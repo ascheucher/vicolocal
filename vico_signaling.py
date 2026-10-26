@@ -46,6 +46,7 @@ class CameraLink:
         self.on_camera_candidate = None  # cb(dict candidate)
         self.on_closed = None            # cb(reason)
         self.ice_servers = []            # TURN servers from WEBRTC_CONFIG (for the browser)
+        self.scp = False                 # data-channel commands go SCP-framed (set by the answer)
         self._closed = False
 
     def log(self, msg):
@@ -172,7 +173,10 @@ class CameraLink:
             sdp = p.get("sdp") if isinstance(p, dict) else None
             answer = decompress_answer(sdp) if isinstance(sdp, dict) else (sdp if isinstance(sdp, str) else None)
             if answer and self._answer and not self._answer.done():
-                self.log("got camera answer")
+                # An answer that carries a version means the camera wants its data-channel
+                # commands wrapped in SCP frames (the app's PlayControl binary flag).
+                self.scp = bool(msg.get("version"))
+                self.log(f"got camera answer (version {msg.get('version') or 'none'})")
                 self._answer.set_result(answer)
         elif method == "TRANSMIT" and mtype == "ICE_CANDIDATE":
             p = self._payload(msg)

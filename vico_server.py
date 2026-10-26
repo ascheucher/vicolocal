@@ -20,7 +20,7 @@ from aiohttp import WSMsgType, web
 from vico_api import VicoCloud
 from vico_signaling import CameraError, CameraLink
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -36,6 +36,8 @@ CONFIG = {
     "accent2": os.environ.get("VICO_ACCENT2") or None,        # override secondary accent
     "simple": os.environ.get("VICO_SIMPLE", "") in ("1", "true", "yes", "on"),  # kid/kiosk mode
     "batteryWarn": os.environ.get("VICO_BATTERY_WARN", "1") not in ("0", "false", "no", "off"),
+    # live-view camera controls: pan/tilt, white light, talk (MagicPix is viewer-side, always on)
+    "controls": os.environ.get("VICO_CONTROLS", "1") not in ("0", "false", "no", "off"),
 }
 
 # Cache-busting token for CSS/JS/icons; changes each container start unless pinned via env
@@ -84,6 +86,7 @@ class Catalog:
             th = self._thumbs.get(sn, {})
             # isCharging: 0 = running on battery (streaming drains it), 1/2 = charging/plugged in.
             charging = d.get("isCharging") not in (0, None)
+            support = d.get("deviceSupport") or {}
             out.append({
                 "serial": sn,
                 "name": d.get("deviceName") or sn,
@@ -94,6 +97,8 @@ class Catalog:
                 "onBattery": not charging,
                 "thumbUrl": th.get("url"),
                 "thumbTime": th.get("time"),
+                "canRotate": bool(support.get("canRotate")),          # pan/tilt motor
+                "whiteLight": bool(support.get("supportWhiteLight")),  # switchable spotlight
             })
         return out
 
@@ -208,7 +213,7 @@ async def ws_stream(request):
             t = data.get("type")
             if t == "offer":
                 answer = await link.negotiate(data["sdp"])
-                await to_browser({"type": "answer", "sdp": answer})
+                await to_browser({"type": "answer", "sdp": answer, "scp": link.scp})
             elif t == "candidate":
                 await link.add_browser_candidate(
                     data["candidate"], data.get("sdpMid"), data.get("sdpMLineIndex"))

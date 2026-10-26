@@ -73,8 +73,25 @@
       <div id="battery-warn" class="warn hidden"></div>
       <div id="video-wrap" class="video-wrap">
         <video id="video" autoplay playsinline muted></video>
+        <canvas id="magic-canvas" class="magic-canvas hidden"></canvas>
         <div id="spinner" class="spinner"></div>
         <div id="zoom-badge" class="zoom-badge hidden">1.0&times;</div>
+        <div id="ptz" class="ptz hidden" role="group" aria-label="Move camera">
+          <button class="ptz-btn up" data-dir="up" title="Tilt up" aria-label="Tilt up">&#x25b2;</button>
+          <button class="ptz-btn left" data-dir="left" title="Pan left" aria-label="Pan left">&#x25c0;</button>
+          <button class="ptz-btn right" data-dir="right" title="Pan right" aria-label="Pan right">&#x25b6;</button>
+          <button class="ptz-btn down" data-dir="down" title="Tilt down" aria-label="Tilt down">&#x25bc;</button>
+        </div>
+      </div>
+      <div id="live-bar" class="live-bar hidden">
+        <button id="talk-btn" class="ctl" title="Talk through the camera: tap to start and stop, or hold while you speak">
+          <span class="ic">&#x1f399;&#xfe0f;</span><span class="lbl">Talk</span></button>
+        <button id="light-btn" class="ctl" title="Turn the camera's white light on or off">
+          <span class="ic">&#x1f4a1;</span><span class="lbl">Light</span></button>
+        <button id="magic-btn" class="ctl" title="MagicPix: brighten the picture when it's dark (done in this browser)">
+          <span class="ic">&#x2728;</span><span class="lbl">MagicPix</span></button>
+        <button id="move-btn" class="ctl" title="Show or hide the pan/tilt arrows (arrow keys work too)">
+          <span class="ic">&#x1f579;&#xfe0f;</span><span class="lbl">Move</span></button>
       </div>
       <div id="clip-bar" class="clip-bar hidden">
         <button id="clip-back" class="btn ghost sm">&#x2190; clips</button>

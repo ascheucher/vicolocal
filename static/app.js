@@ -8,7 +8,7 @@ const LS = { get: (k) => { try { return localStorage.getItem(k); } catch { retur
              set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 // ---------- config (env-settable via /api/config) ----------
-let CFG = { batteryWarn: true, simple: false };
+let CFG = { batteryWarn: true, simple: false, controls: true };
 async function loadConfig() {
   try {
     const c = await (await fetch("/api/config")).json();
@@ -233,13 +233,13 @@ addEventListener("keydown", (e) => { if (e.key === "Escape" && drag) { moveSlot(
 
 // ---------- zoom / pan on the video ----------
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-function setupZoom(wrap, video, badge) {
+function setupZoom(wrap, layers, badge) {
   let scale = 1, tx = 0, ty = 0;
   const pts = new Map(); let pinch = null, pan = null; const MAX = 6;
   function apply() {
     const mx = (scale - 1) * wrap.clientWidth / 2, my = (scale - 1) * wrap.clientHeight / 2;
     tx = Math.max(-mx, Math.min(mx, tx)); ty = Math.max(-my, Math.min(my, ty));
-    video.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+    for (const el of layers) el.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
     wrap.classList.toggle("zoomed", scale > 1.01);
     badge.classList.toggle("hidden", scale <= 1.01);
     badge.textContent = scale.toFixed(1) + "×";
@@ -314,6 +314,294 @@ function toggleSound() {
   toast(on ? "Sound on — " + currentCam.name : "Sound muted");
 }
 
+// ---------- camera commands (over the WebRTC data channel) ----------
+// The app's PlayControl sends JSON commands straight to the camera on the data channel.
+// When the camera's answer carries a version (every camera here), each one goes wrapped in an
+// SCP frame: AB CD 18 00 | stream id (u16 BE) | 00 00 | length (u32 BE) | JSON. Replies come
+// back the same way as {action, requestID, returnValue}: 0 = done.
+const CMD_TIMEOUT_MS = 5000;
+const utf8 = new TextEncoder();
+let scpStream = Math.floor(Math.random() * 1000);
+function scpFrame(json) {
+  const body = utf8.encode(json), out = new Uint8Array(12 + body.length), v = new DataView(out.buffer);
+  scpStream = (scpStream + 1) % 0xffff;
+  v.setUint16(0, 0xabcd); v.setUint8(2, 0x18); v.setUint16(4, scpStream); v.setUint32(8, body.length);
+  out.set(body, 12);
+  return out;
+}
+
+// Fire one command; `params` is a JSON string (the camera wants floats written as floats).
+function sendCmd(s, action, params) {
+  if (!s || !s.dc || s.dc.readyState !== "open") return null;
+  const now = Date.now(), id = `${now}-${Math.floor(Math.random() * 1000)}`;
+  let json = JSON.stringify({ requestID: id, connectionID: "7893feb", timeStamp: Math.floor(now / 1000), action, targetId: s.serial });
+  if (params) json = json.slice(0, -1) + ',"parameters":' + params + "}";
+  try { s.dc.send(s.scp ? scpFrame(json) : json); } catch (e) { dbg("err", `${action}: ${e}`); return null; }
+  dbg("dc", `→ ${action}${params ? " " + params : ""}`);
+  return id;
+}
+
+// Send and wait for the camera's returnValue (-1 = not connected, -2 = no answer in time).
+function camCmd(action, params) {
+  const s = session;
+  return new Promise((resolve) => {
+    const id = sendCmd(s, action, params);
+    if (!id) return resolve(-1);
+    const t = setTimeout(() => { s.pending.delete(id); resolve(-2); }, CMD_TIMEOUT_MS);
+    s.pending.set(id, (rv) => { clearTimeout(t); resolve(rv); });
+  });
+}
+
+function onDcMessage(ev) {
+  let text = ev.data;
+  if (typeof text !== "string") {
+    let b = new Uint8Array(text);
+    if (b.length >= 12 && b[0] === 0xab && b[1] === 0xcd) b = b.subarray(12, 12 + new DataView(b.buffer, b.byteOffset).getUint32(8));
+    text = new TextDecoder().decode(b);
+  }
+  let m;
+  try { m = JSON.parse(text); } catch { dbg("dc", "← " + text.slice(0, 160)); return; }
+  const rv = m.returnValue != null ? m.returnValue : m.returnVal;
+  dbg("dc", `← ${m.action || "?"} ${rv != null ? rv : text.slice(0, 120)}`);
+  const done = session && session.pending.get(m.requestID);
+  if (done) { session.pending.delete(m.requestID); done(rv); }
+}
+
+// ---------- pan / tilt ----------
+// "rotate" {pitch, yaw}, each -1..1, runs the motor briefly at that speed (pitch +1 tilts down,
+// yaw +1 pans left); repeated every ~250 ms it keeps moving, as with the app's joystick. The
+// next one goes out only once the camera has answered the last, so letting go stops it at once
+// rather than leaving a backlog to run on. Replies: 1000-1007 = at the end of travel; for
+// ~10 s after waking the motor refuses with 4 (2000 = calibrating).
+const PTZ_DIRS = { up: [-1, 0], down: [1, 0], left: [0, 1], right: [0, -1] };
+const KEY_DIRS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let ptzHold = null;
+
+function ptzUsable() {
+  return !!(CFG.controls !== false && currentCam && currentCam.canRotate && session && session.dc && session.dc.readyState === "open");
+}
+
+async function ptzStart(dir) {
+  if (ptzHold || !ptzUsable()) return;
+  const hold = ptzHold = { dir, steps: 0, warned: false };
+  $(`.ptz-btn.${dir}`).classList.add("active");
+  while (ptzHold === hold && session) {
+    const [p, y] = PTZ_DIRS[dir], k = hold.steps ? 1 : 0.5, sent = Date.now();   // a tap nudges, a hold keeps going
+    const rv = await camCmd("rotate", `{"pitch":${(p * k).toFixed(2)},"yaw":${(y * k).toFixed(2)}}`);
+    if (ptzHold !== hold) break;   // let go, or the view closed, while the step was out
+    if (rv === 0) hold.steps++;
+    else if (rv === 4 || rv === 2000) {   // motor still starting up / calibrating
+      if (!hold.warned) toast("The camera's motor is still waking up — try again in a few seconds");
+      hold.warned = true;
+      await sleep(800);
+    } else if (rv >= 1000 && rv < 1008) {
+      toast("The camera can't turn any further that way");
+      break;
+    } else {
+      toast(rv === -2 ? "The camera didn't answer the move" : rv === -1 ? "Not connected to the camera" : `The camera refused to move (code ${rv})`);
+      break;
+    }
+    await sleep(Math.max(0, 250 - (Date.now() - sent)));
+  }
+  if (ptzHold === hold) ptzStop();
+}
+
+function ptzStop() {
+  ptzHold = null;
+  document.querySelectorAll(".ptz-btn.active").forEach((b) => b.classList.remove("active"));
+}
+
+// ---------- white light ----------
+// "setWhiteLight" {value: 2 on, 1 off}. It's a battery hog, so it goes off with the stream.
+async function toggleLight() {
+  const s = session, b = $("#light-btn");
+  if (!s || b.classList.contains("busy")) return;
+  const on = !s.lightOn;
+  b.classList.add("busy");
+  const rv = await camCmd("setWhiteLight", `{"value":${on ? 2 : 1}}`);
+  b.classList.remove("busy");
+  if (s !== session) return;
+  if (rv === 0) { s.lightOn = on; toast(on ? "Light on — it turns off when you close the view" : "Light off"); }
+  else toast(rv === -2 ? "The camera didn't answer the light switch" : `The camera refused the light (code ${rv})`);
+  updateLiveBar();
+}
+
+// ---------- talk ----------
+// The camera already gets an audio track from us (silence: it won't stream without one), so
+// talking just swaps in the microphone, as the app's speakEnable() does. Tap to start and tap
+// again to stop, or hold while speaking and let go. Browsers only allow the mic over HTTPS.
+async function startTalk() {
+  const s = session;
+  if (!s || s.talking) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast("Talking needs the dashboard opened over HTTPS"); return;
+  }
+  s.talking = "starting"; updateLiveBar();
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    if (s !== session || s.talking !== "starting") { mic.getTracks().forEach((t) => t.stop()); return; }
+    await s.audioSender.replaceTrack(mic.getAudioTracks()[0]);
+    s.mic = mic; s.talking = true;
+    dbg("pc", "talking: microphone on");
+  } catch (e) {
+    s.talking = false;
+    toast(e && e.name === "NotAllowedError" ? "Microphone permission was denied" : "Microphone unavailable: " + ((e && e.message) || e));
+  }
+  updateLiveBar();
+}
+
+function stopTalk(s = session) {
+  if (!s || !s.talking) return;
+  s.talking = false;
+  if (s.mic) {
+    s.audioSender.replaceTrack(s.silentTrack).catch(() => {});
+    s.mic.getTracks().forEach((t) => t.stop());
+    s.mic = null;
+    dbg("pc", "talking: microphone off");
+  }
+  if (s === session) updateLiveBar();
+}
+
+// ---------- MagicPix ----------
+// The app's MagicPix is a filter the phone runs on the decoded picture (nothing goes to the
+// camera), so this is our own WebGL take on it: a few times a second it measures how dark the
+// picture is and, only when it's dark, lifts the shadows with a gamma curve, softens the noise
+// that brings up, and keeps the colours. It draws over the video and is remembered per camera.
+const MP_VS = "attribute vec2 p; varying vec2 uv;" +
+  "void main() { uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }";
+const MP_FS = `precision mediump float;
+varying vec2 uv;
+uniform sampler2D tex;
+uniform vec2 px;      // one texel
+uniform float g;      // gamma; < 1 lifts the shadows
+uniform float amt;    // 0..1, how hard we're boosting
+void main() {
+  vec3 c = texture2D(tex, uv).rgb;
+  vec3 n = .25 * (texture2D(tex, uv + vec2(px.x, 0.)).rgb + texture2D(tex, uv - vec2(px.x, 0.)).rgb +
+                  texture2D(tex, uv + vec2(0., px.y)).rgb + texture2D(tex, uv - vec2(0., px.y)).rgb);
+  c = mix(c, n, .4 * amt);
+  float y = max(dot(c, vec3(.299, .587, .114)), .001);
+  float y2 = pow(y, g);
+  y2 = mix(y2, y2 * y2 * (3. - 2. * y2), .2 * amt);
+  vec3 keep = c * min(y2 / y, 8.);
+  vec3 per = pow(c, vec3(g));
+  gl_FragColor = vec4(clamp(mix(per, keep, .5), 0., 1.), 1.);
+}`;
+const MP = { gl: null, u: null, meter: null, on: false, raf: 0, vfc: 0, g: 1, gTarget: 1, meterAt: 0, drawn: false };
+
+function mpSetup() {
+  if (MP.gl) return true;
+  const gl = $("#magic-canvas").getContext("webgl", { alpha: false, antialias: false });
+  if (!gl) return false;
+  const prog = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, MP_VS], [gl.FRAGMENT_SHADER, MP_FS]]) {
+    const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); gl.attachShader(prog, sh);
+  }
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { dbg("err", "MagicPix: " + gl.getProgramInfoLog(prog)); return false; }
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const p = gl.getAttribLocation(prog, "p");
+  gl.enableVertexAttribArray(p); gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 0, 0);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  MP.u = { px: gl.getUniformLocation(prog, "px"), g: gl.getUniformLocation(prog, "g"), amt: gl.getUniformLocation(prog, "amt") };
+  const m = document.createElement("canvas"); m.width = 32; m.height = 18;
+  MP.meter = m.getContext("2d", { willReadFrequently: true });
+  MP.gl = gl;
+  return true;
+}
+
+// Mean brightness of a 32x18 thumbnail of the picture -> the gamma that lifts it to ~0.4.
+function mpMeasure(v) {
+  MP.meter.drawImage(v, 0, 0, 32, 18);
+  const d = MP.meter.getImageData(0, 0, 32, 18).data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  const mean = sum / (d.length / 4) / 255;
+  MP.gTarget = mean >= 0.4 ? 1 : Math.max(0.38, Math.log(0.4) / Math.log(Math.max(mean, 0.01)));
+}
+
+function mpFrame() {
+  MP.raf = MP.vfc = 0;
+  if (!MP.on) return;
+  const v = $("#video"), gl = MP.gl, c = gl.canvas;
+  if (v.videoWidth && v.readyState >= 2) {
+    if (c.width !== v.videoWidth || c.height !== v.videoHeight) {
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      gl.viewport(0, 0, c.width, c.height); gl.uniform2f(MP.u.px, 1 / c.width, 1 / c.height);
+    }
+    const now = performance.now();
+    if (now - MP.meterAt > 400) { MP.meterAt = now; try { mpMeasure(v); } catch {} }
+    MP.g += (MP.gTarget - MP.g) * 0.1;   // ease, so the picture doesn't pump
+    gl.uniform1f(MP.u.g, MP.g);
+    gl.uniform1f(MP.u.amt, Math.min(1, Math.max(0, (1 - MP.g) / 0.6)));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, v);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (!MP.drawn) { MP.drawn = true; c.classList.remove("hidden"); }
+    $("#magic-btn").classList.toggle("boosting", MP.g < 0.93);
+  }
+  if (v.requestVideoFrameCallback) MP.vfc = v.requestVideoFrameCallback(mpFrame);
+  else MP.raf = requestAnimationFrame(mpFrame);
+}
+
+function mpStart() {
+  if (MP.on) return true;
+  if (!mpSetup()) return false;
+  Object.assign(MP, { on: true, g: 1, gTarget: 1, meterAt: 0, drawn: false });
+  mpFrame();
+  return true;
+}
+
+function mpStop() {
+  const v = $("#video");
+  MP.on = false;
+  if (MP.vfc && v.cancelVideoFrameCallback) v.cancelVideoFrameCallback(MP.vfc);
+  if (MP.raf) cancelAnimationFrame(MP.raf);
+  MP.vfc = MP.raf = 0;
+  $("#magic-canvas").classList.add("hidden");
+  $("#magic-btn").classList.remove("boosting");
+}
+
+function magicPref(serial) { return LS.get("vmagic:" + serial) === "1"; }
+function applyMagic(cam) {
+  if (!cam || !magicPref(cam.serial)) mpStop();
+  else if (!mpStart()) { LS.set("vmagic:" + cam.serial, "0"); toast("MagicPix needs WebGL, which this browser doesn't have"); }
+  updateLiveBar();
+}
+function toggleMagic() {
+  if (!currentCam) return;
+  const on = !magicPref(currentCam.serial);
+  LS.set("vmagic:" + currentCam.serial, on ? "1" : "0");
+  applyMagic(currentCam);
+  if (MP.on === on) toast(on ? "MagicPix on — dark pictures get brightened" : "MagicPix off");
+}
+
+// ---------- live controls bar ----------
+function updateLiveBar() {
+  const s = session, cam = currentCam, ctl = !!(s && cam && CFG.controls !== false);
+  const ready = !!(s && s.dc && s.dc.readyState === "open");
+  const talk = $("#talk-btn"), light = $("#light-btn"), move = $("#move-btn");
+  $("#live-bar").classList.toggle("hidden", !s);
+  talk.classList.toggle("hidden", !ctl);
+  light.classList.toggle("hidden", !(ctl && cam.whiteLight));
+  move.classList.toggle("hidden", !(ctl && cam.canRotate));
+  talk.disabled = light.disabled = move.disabled = !ready;
+  talk.classList.toggle("on", !!(s && s.talking));
+  talk.querySelector(".lbl").textContent = s && s.talking === true ? "Talking… tap to stop" : s && s.talking ? "Starting mic…" : "Talk";
+  light.classList.toggle("on", !!(s && s.lightOn));
+  light.querySelector(".lbl").textContent = s && s.lightOn ? "Light on" : "Light";
+  $("#magic-btn").classList.toggle("on", MP.on);
+  const pad = ready && ctl && cam.canRotate && LS.get("vptz") !== "0";
+  move.classList.toggle("on", pad);
+  $("#ptz").classList.toggle("hidden", !pad);
+}
+
 let currentCam = null, hls = null;
 
 function openCamera(cam) {
@@ -321,7 +609,7 @@ function openCamera(cam) {
   currentCam = cam;
   $("#stage").classList.remove("hidden");
   $("#stage-name").textContent = cam.name;
-  if (!zoomer) zoomer = setupZoom($("#video-wrap"), $("#video"), $("#zoom-badge"));
+  if (!zoomer) zoomer = setupZoom($("#video-wrap"), [$("#video"), $("#magic-canvas")], $("#zoom-badge"));
   setTab(cam.online ? "live" : "rec");
 }
 
@@ -363,17 +651,24 @@ async function startLive(cam) {
   const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/${cam.serial}`);
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  session = { ws, pc, audioCtx, statsTimer: null };
+  session = { ws, pc, audioCtx, statsTimer: null, serial: cam.serial, scp: false, pending: new Map(),
+              dc: null, audioSender: null, silentTrack: null, talking: false, mic: null, lightOn: false };
+  updateLiveBar();
 
   try {   // camera needs a sendrecv audio track with a real ssrc -> feed it silence
     if (audioCtx.state === "suspended") audioCtx.resume();   // autoplay policy (Fire/mobile)
     const dst = audioCtx.createMediaStreamDestination();
     const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
     g.gain.value = 0; osc.connect(g); g.connect(dst); osc.start();
-    pc.addTrack(dst.stream.getAudioTracks()[0], dst.stream);
+    session.silentTrack = dst.stream.getAudioTracks()[0];
+    session.audioSender = pc.addTrack(session.silentTrack, dst.stream);   // talking swaps the mic in
   } catch (e) { dbg("err", "silent audio failed: " + e); }
   pc.addTransceiver("video", { direction: "recvonly" });
-  pc.createDataChannel("dataChannel");
+  const dc = session.dc = pc.createDataChannel("dataChannel");   // camera commands (light, pan/tilt)
+  dc.binaryType = "arraybuffer";
+  dc.onopen = () => { dbg("dc", "data channel open"); updateLiveBar(); };
+  dc.onclose = () => { dbg("dc", "data channel closed"); ptzStop(); updateLiveBar(); };
+  dc.onmessage = onDcMessage;
 
   pc.ontrack = (e) => {
     const vid = $("#video");
@@ -383,8 +678,12 @@ async function startLive(cam) {
     vid.srcObject = session.remoteStream;
     dbg("pc", "track " + e.track.kind);
     if (e.track.kind === "video") {
-      $("#spinner").classList.add("hidden"); setState("live", true);
+      // the track arrives with the answer, before the connection is up: "live" waits for both
+      session.gotVideo = true;
+      $("#spinner").classList.add("hidden");
+      if (pc.connectionState === "connected") setState("live", true);
       applySound(currentCam);            // honor this camera's saved sound setting
+      applyMagic(currentCam);            // and its MagicPix setting
       vid.play().catch(() => {});
     }
   };
@@ -396,6 +695,7 @@ async function startLive(cam) {
   pc.onconnectionstatechange = () => {
     dbg("pc", "connection " + pc.connectionState);
     if (pc.connectionState !== "connected") setState(pc.connectionState, false);
+    else if (session && session.gotVideo) setState("live", true);
     if (["failed", "disconnected", "closed"].includes(pc.connectionState)) $("#spinner").classList.add("hidden");
   };
 
@@ -406,6 +706,7 @@ async function startLive(cam) {
       await pc.setLocalDescription(await pc.createOffer());
       ws.send(JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp })); dbg("pc", "sent offer");
     } else if (m.type === "answer") {
+      session.scp = !!m.scp;
       await pc.setRemoteDescription({ type: "answer", sdp: m.sdp }); dbg("pc", "got answer"); startStats();
     } else if (m.type === "candidate") {
       try { await pc.addIceCandidate({ candidate: m.candidate, sdpMid: m.sdpMid, sdpMLineIndex: m.sdpMLineIndex }); }
@@ -444,11 +745,24 @@ async function startLive(cam) {
 
 function closeStream() {
   if (!session) return;
-  try { if (session.ws.readyState === 1) session.ws.send(JSON.stringify({ type: "bye" })); } catch {}
-  try { session.ws.close(); } catch {}
-  try { session.pc.close(); } catch {}
-  try { session.audioCtx.close(); } catch {}
-  clearInterval(session.statsTimer); session = null; $("#video").srcObject = null;
+  const s = session;
+  session = null;
+  ptzStop(); mpStop(); stopTalk(s);
+  clearInterval(s.statsTimer);
+  for (const done of s.pending.values()) done(-1);
+  s.ws.onmessage = s.pc.ontrack = s.pc.onconnectionstatechange = s.pc.oniceconnectionstatechange = null;
+  // the light is a battery hog: switch it off before hanging up (as the app does), and give
+  // the data channel a moment to deliver that before the connection goes
+  const lightOff = s.lightOn && sendCmd(s, "setWhiteLight", '{"value":1}');
+  const hangUp = () => {
+    try { if (s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: "bye" })); } catch {}
+    try { s.ws.close(); } catch {}
+    try { s.pc.close(); } catch {}
+    try { s.audioCtx.close(); } catch {}
+  };
+  if (lightOff) setTimeout(hangUp, 500); else hangUp();
+  $("#video").srcObject = null;
+  updateLiveBar();
 }
 function closeStage() { closeStream(); stopClip(); $("#stage").classList.add("hidden"); }
 
@@ -521,6 +835,61 @@ $("#debug-copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#debug-log").textContent); toast("Debug log copied"); } catch { toast("Copy failed"); }
 });
 $("#refresh").addEventListener("click", () => loadCameras(true));
+
+// live controls
+$("#light-btn").addEventListener("click", toggleLight);
+$("#magic-btn").addEventListener("click", toggleMagic);
+$("#move-btn").addEventListener("click", () => { LS.set("vptz", LS.get("vptz") === "0" ? "1" : "0"); updateLiveBar(); });
+const ptzPad = $("#ptz");
+ptzPad.addEventListener("pointerdown", (e) => e.stopPropagation());   // not the video's zoom/pan
+ptzPad.addEventListener("dblclick", (e) => e.stopPropagation());
+ptzPad.querySelectorAll(".ptz-btn").forEach((b) => {
+  b.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    try { b.setPointerCapture(e.pointerId); } catch {}
+    ptzStart(b.dataset.dir);
+  });
+  b.addEventListener("pointerup", ptzStop);
+  b.addEventListener("pointercancel", ptzStop);
+  b.addEventListener("contextmenu", (e) => e.preventDefault());
+});
+document.addEventListener("keydown", (e) => {
+  const dir = KEY_DIRS[e.key];
+  if (!dir || e.repeat || $("#stage").classList.contains("hidden") || !ptzUsable()) return;
+  e.preventDefault();
+  ptzStart(dir);
+});
+document.addEventListener("keyup", (e) => { if (ptzHold && ptzHold.dir === KEY_DIRS[e.key]) ptzStop(); });
+// talk: a tap leaves the mic on (tap again to stop); a press held past the first moment
+// talks only while held. A permission prompt on the first press counts as a tap.
+const talkBtn = $("#talk-btn");
+let talkPress = null;
+talkBtn.addEventListener("pointerdown", (e) => {
+  if ((e.button != null && e.button !== 0) || talkBtn.disabled) return;
+  e.preventDefault();
+  try { talkBtn.setPointerCapture(e.pointerId); } catch {}
+  const was = !!(session && session.talking);
+  talkPress = { was, hold: false };
+  talkPress.t = setTimeout(() => { if (talkPress) talkPress.hold = !!(session && session.talking === true); }, 450);
+  if (!was) startTalk();
+});
+const talkRelease = () => {
+  if (!talkPress) return;
+  clearTimeout(talkPress.t);
+  if (talkPress.was || talkPress.hold) stopTalk();
+  talkPress = null;
+};
+talkBtn.addEventListener("pointerup", talkRelease);
+talkBtn.addEventListener("pointercancel", talkRelease);
+talkBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+talkBtn.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  if (session && session.talking) stopTalk(); else startTalk();
+});
+// leaving the page with the light on: switch it off on the way out
+addEventListener("pagehide", () => { if (session && session.lightOn) sendCmd(session, "setWhiteLight", '{"value":1}'); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#stage").classList.contains("hidden")) closeStage(); });
 
 loadConfig();
