@@ -20,7 +20,7 @@ from aiohttp import WSMsgType, web
 from vico_api import VicoCloud
 from vico_signaling import CameraError, CameraLink
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
