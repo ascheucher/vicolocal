@@ -22,8 +22,11 @@ media). This project is a tiny signaling bridge plus a dashboard that does exact
 - **Snapshot tiles** refreshed from the cloud (~every 30 min) at **no battery cost**.
 - **Battery-aware** — shows charge level and warns when you're streaming a camera that's
   running on battery (not plugged in).
-- **Drag to reorder**, pinch / scroll-wheel **zoom + pan** on the video, a built-in
-  **debug console** (connection state, LAN-vs-relay path, fps, loss) with copy-to-clipboard.
+- **Drag to reorder**, pinch / scroll-wheel **zoom + pan** on the video (tap the zoom badge
+  to reset), a built-in **debug console** (connection state, LAN-vs-relay path, fps, loss)
+  with copy-to-clipboard.
+- **Fullscreen** video (zoom and the pan/tilt arrows keep working; on iPhone it opens the
+  native player), and a live view that fits a **phone on its side**.
 - **4 themes** (incl. a light one) and a **kid/kiosk mode**.
 - Fully **env-configurable** and **containerized** (works behind Traefik on 443, no ports
   for users).

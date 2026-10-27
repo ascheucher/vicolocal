@@ -764,7 +764,32 @@ function closeStream() {
   $("#video").srcObject = null;
   updateLiveBar();
 }
-function closeStage() { closeStream(); stopClip(); $("#stage").classList.add("hidden"); }
+function closeStage() { exitFullscreen(); closeStream(); stopClip(); $("#stage").classList.add("hidden"); }
+
+// ---------- fullscreen ----------
+// The video box goes fullscreen (zoom and pan keep working) where the Fullscreen API exists;
+// iPhone Safari only lets the <video> itself go fullscreen, in its native player.
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+function exitFullscreen() {
+  if (!fsElement()) return;
+  try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch {}
+}
+function toggleFullscreen() {
+  if (fsElement()) return exitFullscreen();
+  const wrap = $("#video-wrap"), vid = $("#video");
+  if (wrap.classList.contains("hidden")) return;           // recordings list showing, no video
+  const req = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+  if (req && (document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+    Promise.resolve(req.call(wrap))
+      .then(() => { try { screen.orientation.lock("landscape").catch(() => {}); } catch {} })
+      .catch((e) => toast("Fullscreen failed: " + e.message));
+  } else if (vid.webkitEnterFullscreen) {
+    try { vid.webkitEnterFullscreen(); } catch { toast("Fullscreen isn't available here"); }
+  } else toast("Fullscreen isn't available in this browser");
+}
+const onFsChange = () => { if (!fsElement()) { try { screen.orientation.unlock(); } catch {} } };
+document.addEventListener("fullscreenchange", onFsChange);
+document.addEventListener("webkitfullscreenchange", onFsChange);
 
 // ---------- recordings ----------
 async function loadClips(serial) {
@@ -827,7 +852,11 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
 $("#clip-back").addEventListener("click", () => setTab("rec"));
 $("#stage-close").addEventListener("click", closeStage);
 $("#stage").addEventListener("click", (e) => { if (e.target.id === "stage") closeStage(); });
-$("#zoom-reset").addEventListener("click", () => zoomer && zoomer.reset());
+$("#fullscreen").addEventListener("click", toggleFullscreen);
+// controls inside the video box: keep their taps away from the box's pan/zoom handlers
+for (const id of ["#fs-exit", "#zoom-badge"]) $(id).addEventListener("pointerdown", (e) => e.stopPropagation());
+$("#fs-exit").addEventListener("click", exitFullscreen);
+$("#zoom-badge").addEventListener("click", () => zoomer && zoomer.reset());
 $("#sound-toggle").addEventListener("click", toggleSound);
 $("#debug-toggle").addEventListener("click", () => $("#debug").classList.toggle("hidden"));
 $("#debug-clear").addEventListener("click", () => { $("#debug-log").textContent = ""; });

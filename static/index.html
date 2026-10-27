@@ -61,7 +61,7 @@
         </div>
         <div class="stage-actions">
           <button id="sound-toggle" class="btn icon ghost hidden" title="Sound on/off" aria-label="Toggle sound">&#x1f507;</button>
-          <button id="zoom-reset" class="btn icon ghost" title="Reset zoom" aria-label="Reset zoom">&#x26f6;</button>
+          <button id="fullscreen" class="btn icon ghost" title="Fullscreen" aria-label="Fullscreen">&#x26f6;</button>
           <button id="debug-toggle" class="btn icon ghost" title="Debug console" aria-label="Debug">&#x1f41e;</button>
           <button id="stage-close" class="btn icon ghost" title="Close" aria-label="Close">&#x2715;</button>
         </div>
@@ -75,7 +75,8 @@
         <video id="video" autoplay playsinline muted></video>
         <canvas id="magic-canvas" class="magic-canvas hidden"></canvas>
         <div id="spinner" class="spinner"></div>
-        <div id="zoom-badge" class="zoom-badge hidden">1.0&times;</div>
+        <div id="zoom-badge" class="zoom-badge hidden" title="Reset zoom">1.0&times;</div>
+        <button id="fs-exit" class="fs-exit" title="Exit fullscreen" aria-label="Exit fullscreen">&#x2715;</button>
         <div id="ptz" class="ptz hidden" role="group" aria-label="Move camera">
           <button class="ptz-btn up" data-dir="up" title="Tilt up" aria-label="Tilt up">&#x25b2;</button>
           <button class="ptz-btn left" data-dir="left" title="Pan left" aria-label="Pan left">&#x25c0;</button>
