@@ -36,6 +36,7 @@
     </div>
     <div class="controls">
       <button id="refresh" class="btn icon" title="Refresh cameras" aria-label="Refresh">&#x21bb;</button>
+      <button id="birds-btn" class="btn icon hidden" title="Birds that visited" aria-label="Birds">&#x1f426;</button>
       <button id="archive-btn" class="btn icon hidden" title="Archived clips" aria-label="Archive">&#x1f4fc;</button>
       <div class="select-wrap">
         <select id="theme" aria-label="Theme">
@@ -104,6 +105,10 @@
         <div id="arc-bar" class="arc-bar hidden">
           <div class="select-wrap"><select id="arc-month" aria-label="Month"></select></div>
           <span id="arc-count" class="arc-count"></span>
+        </div>
+        <div id="bird-bar" class="arc-bar hidden">
+          <button id="bird-back" class="btn ghost sm">&#x2190; birds</button>
+          <span id="bird-count" class="arc-count"></span>
         </div>
         <div id="rec-list" class="rec-list"></div>
       </div>

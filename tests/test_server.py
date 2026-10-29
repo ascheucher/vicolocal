@@ -1,4 +1,5 @@
-"""vico_server: the archive endpoints (no cloud needed)."""
+"""vico_server: the archive and birds endpoints (cloud patched out)."""
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -43,6 +44,63 @@ class ArchiveApiTest(AioHTTPTestCase):
             for bad in ("../../etc/passwd", "2026-10/../../x.mp4", "/etc/passwd", ""):
                 r = await self.client.get("/api/archive/file", params={"path": bad})
                 self.assertEqual(r.status, 404, bad)
+
+
+TIT = {"name": "Great Tit", "latin": "Parus major", "image": "https://x/crop"}
+SPARROW = {"name": "Eurasian Tree Sparrow", "latin": "Passer montanus", "image": None}
+
+
+class BirdsApiTest(AioHTTPTestCase):
+    async def get_application(self):
+        return vico_server.make_app()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        month = self.root / "2026-10"
+        month.mkdir()
+        (month / "2026-10-28_09-00-00_bird_t1.mp4").write_bytes(b"a")
+        (month / "2026-10-28_09-00-00_bird_t1.json").write_text(json.dumps(
+            {"trace": "t1", "species": {"name": "Great Tit", "latin": "Parus major"}}))
+        (month / "2026-10-28_09-00-00_bird_t1.bird.jpg").write_bytes(b"crop")
+        (month / "2026-10-27_09-00-00_bird_t0.mp4").write_bytes(b"b")   # no sidecar: unidentified
+        self.cloud = [
+            {"trace": "t1", "time": 1793264400, "video": "hls1", "species": TIT},        # archived too
+            {"trace": "t2", "time": 1793350800, "video": "hls2", "species": SPARROW},
+            {"trace": "t3", "time": 1793350900, "video": "hls3", "species": None},
+        ]
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self.tmp.cleanup()
+
+    async def test_groups_cloud_and_archive_by_species(self):
+        with patch.object(vico_server, "ARCHIVE_DIR", self.root), \
+             patch.object(vico_server, "_fetch_clips", lambda serial, days: self.cloud):
+            r = await self.client.get("/api/birds")
+            data = await r.json()
+        self.assertIsNone(data["error"])
+        self.assertEqual([(g["name"], g["count"]) for g in data["species"]],   # same count: latest visit first
+                         [("Eurasian Tree Sparrow", 1), ("Great Tit", 1)])
+        tit = data["species"][1]["clips"][0]
+        self.assertEqual(tit["file"], "2026-10/2026-10-28_09-00-00_bird_t1.mp4")   # the archived copy wins
+        self.assertEqual(tit["bird"], "2026-10/2026-10-28_09-00-00_bird_t1.bird.jpg")
+        self.assertEqual(data["species"][0]["clips"][0]["video"], "hls2")
+
+    async def test_cloud_failure_leaves_the_archive_and_an_error(self):
+        def boom(serial, days):
+            raise RuntimeError("no cloud today")
+        with patch.object(vico_server, "ARCHIVE_DIR", self.root), patch.object(vico_server, "_fetch_clips", boom):
+            data = await (await self.client.get("/api/birds")).json()
+        self.assertEqual(data["error"], "no cloud today")
+        self.assertEqual([g["name"] for g in data["species"]], ["Great Tit"])
+
+    async def test_without_archive_it_is_cloud_only(self):
+        with patch.object(vico_server, "_fetch_clips", lambda serial, days: self.cloud):
+            data = await (await self.client.get("/api/birds?days=7")).json()
+        self.assertEqual([(g["name"], g["clips"][0]["video"]) for g in data["species"]],
+                         [("Eurasian Tree Sparrow", "hls2"), ("Great Tit", "hls1")])
 
 
 if __name__ == "__main__":

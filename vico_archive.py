@@ -7,14 +7,18 @@ vico_pull.py fills it; any other .mp4 placed under the directory is listed too.
 Layout, as vico_pull.py writes it (tags joined by "+", "-" standing in for other characters):
     <root>/<YYYY-MM>/<YYYY-MM-DD_HH-MM-SS>_<tags>_<id>.mp4
     <root>/<YYYY-MM>/<same name>.jpg          thumbnail, optional
+    <root>/<YYYY-MM>/<same name>.json         what the cloud said: trace, time, period, tags,
+                                              species {name, latin} (see vico_birds.py), optional
+    <root>/<YYYY-MM>/<same name>.bird.jpg     crop of the identified bird, optional
 A file that isn't named like that is listed by its modification time, without tags.
 """
+import json
 import re
 from datetime import datetime
 from pathlib import Path
 
 STAMP = "%Y-%m-%d_%H-%M-%S"
-_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:_([^_]*))?(?:_.*)?$")
+_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})(?:_([^_]*))?(?:_(.*))?$")
 
 
 def clip_name(when: datetime, tags: str = "", clip_id: str = "") -> str:
@@ -29,20 +33,33 @@ def clip_path(root: Path, when: datetime, tags: str = "", clip_id: str = "") -> 
     return Path(root) / when.strftime("%Y-%m") / (clip_name(when, tags, clip_id) + ".mp4")
 
 
+def _sidecar(path: Path) -> dict:
+    try:
+        meta = json.loads(path.with_suffix(".json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def _entry(root: Path, path: Path) -> dict:
     m = _NAME.match(path.stem)
     if m:
         when = datetime.strptime(m.group(1), STAMP).timestamp()
         tags = [t.replace("-", " ") for t in (m.group(2) or "").split("+") if t and t != "clip"]
+        ident = m.group(3) or None
     else:
-        when, tags = path.stat().st_mtime, []
-    thumb = path.with_suffix(".jpg")
+        when, tags, ident = path.stat().st_mtime, [], None
+    meta = _sidecar(path)
+    thumb, bird = path.with_suffix(".jpg"), path.with_suffix(".bird.jpg")
     return {
         "file": path.relative_to(root).as_posix(),
+        "trace": meta.get("trace") or ident,
         "time": int(when),
         "tags": tags,
         "size": path.stat().st_size,
         "thumb": thumb.relative_to(root).as_posix() if thumb.is_file() else None,
+        "species": meta.get("species") or None,
+        "bird": bird.relative_to(root).as_posix() if bird.is_file() else None,
     }
 
 

@@ -21,6 +21,7 @@ async function loadConfig() {
     if (c.simple) document.body.classList.add("simple");
   } catch {}
   loadArchive();
+  loadBirds();
 }
 
 // ---------- theme ----------
@@ -604,13 +605,14 @@ function updateLiveBar() {
 }
 
 let currentCam = null, hls = null;
+let view = "cam";   // what the stage shows: a camera, the archive or the birds list
 
 function openCamera(cam) {
   closeStream(); stopClip();
-  currentCam = cam;
+  currentCam = cam; view = "cam";
   $("#stage").classList.remove("hidden");
   $("#stage-name").textContent = cam.name;
-  $(".stage-tabs").classList.remove("hidden"); $("#arc-bar").classList.add("hidden");
+  $(".stage-tabs").classList.remove("hidden"); $("#arc-bar").classList.add("hidden"); $("#bird-bar").classList.add("hidden");
   if (!zoomer) zoomer = setupZoom($("#video-wrap"), [$("#video"), $("#magic-canvas")], $("#zoom-badge"));
   setTab(cam.online ? "live" : "rec");
 }
@@ -818,7 +820,8 @@ function clipTile(c, thumb, badge, onClick) {
     </div>
     <div class="cmeta">
       <div class="ctime">${t.toLocaleDateString([], { month: "short", day: "numeric" })} ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-      ${c.tags && c.tags.length ? `<div class="ctags">${esc(c.tags.join(", "))}</div>` : ""}
+      ${c.species ? `<div class="ctags">${esc(c.species.name)}</div>` :
+        c.tags && c.tags.length ? `<div class="ctags">${esc(c.tags.join(", "))}</div>` : ""}
     </div>`;
   el.addEventListener("click", onClick);
   return el;
@@ -836,7 +839,7 @@ function playClip(c) {
   const t = new Date(c.time * 1000);
   $("#clip-meta").textContent = `${t.toLocaleString()} · ${c.duration}s`;
   $("#clip-dl").href = `/api/clip/download?url=${encodeURIComponent(c.video)}&name=` +
-    encodeURIComponent(`${currentCam.name || "clip"} ${t.toISOString().slice(0, 16).replace("T", " ")}`);
+    encodeURIComponent(`${(currentCam && currentCam.name) || c.name || "clip"} ${t.toISOString().slice(0, 16).replace("T", " ")}`);
   $("#clip-dl").download = "";
   if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = c.video; v.play().catch(() => {}); }
   else if (window.Hls && Hls.isSupported()) {
@@ -872,10 +875,10 @@ function fmtSize(b) { return b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : b >= 1e6 
 
 function openArchive() {
   closeStream(); stopClip();
-  currentCam = null;
+  currentCam = null; view = "archive";
   $("#stage").classList.remove("hidden");
   $("#stage-name").textContent = "Archive";
-  $(".stage-tabs").classList.add("hidden");
+  $(".stage-tabs").classList.add("hidden"); $("#bird-bar").classList.add("hidden");
   document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
   if (!zoomer) zoomer = setupZoom($("#video-wrap"), [$("#video"), $("#magic-canvas")], $("#zoom-badge"));
   updateSoundBtn(false, false); updateLiveBar();
@@ -916,11 +919,86 @@ function playArchived(c) {
   v.src = url; v.play().catch(() => {});
 }
 
+// ---------- birds ----------
+// Who visited: the species the cloud identified in its clips (last few days) plus everything
+// in the archive, grouped per species by the server (/api/birds, see vico_birds.py). The header
+// button shows once a bird was identified. A species tile opens its clips; archived ones play
+// from this server, the rest via HLS from the cloud.
+let birds = [], birdSel = null;
+async function loadBirds() {
+  try { birds = (await (await fetch("/api/birds?days=3")).json()).species || []; } catch { birds = []; }
+  $("#birds-btn").classList.toggle("hidden", !birds.length);
+}
+// Best picture of the bird in a clip: the saved crop, the cloud's crop, else the clip thumbnail.
+const birdPic = (c) => c.bird ? archiveUrl(c.bird) : (c.species && c.species.image) || (c.file ? c.thumb && archiveUrl(c.thumb) : c.thumb);
+
+function openBirds() {
+  closeStream(); stopClip();
+  currentCam = null; view = "birds";
+  $("#stage").classList.remove("hidden");
+  $(".stage-tabs").classList.add("hidden"); $("#arc-bar").classList.add("hidden");
+  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+  if (!zoomer) zoomer = setupZoom($("#video-wrap"), [$("#video"), $("#magic-canvas")], $("#zoom-badge"));
+  updateSoundBtn(false, false); updateLiveBar();
+  $("#battery-warn").classList.add("hidden");
+  showBirdsList();
+}
+
+function showBirdsList() {
+  stopClip(); birdSel = null;
+  $("#stage-name").textContent = "Birds";
+  $("#video-wrap").classList.add("hidden");
+  $("#rec-panel").classList.remove("hidden"); $("#bird-bar").classList.add("hidden");
+  setState(`${birds.length} species`, false);
+  const list = $("#rec-list");
+  list.innerHTML = "";
+  if (!birds.length) { list.innerHTML = '<div class="rec-empty">no birds identified yet</div>'; return; }
+  for (const b of birds) list.appendChild(birdTile(b));
+}
+
+function birdTile(b) {
+  const el = document.createElement("div"); el.className = "clip bird";
+  const pic = birdPic(b.clips.find((c) => c.bird || (c.species && c.species.image)) || b.clips[0]), last = new Date(b.last * 1000);
+  el.innerHTML = `
+    <div class="cthumb" ${pic ? `style="background-image:url('${pic}')"` : ""}>
+      ${pic ? "" : '<div class="cnoimg">&#x1f426;</div>'}
+      <div class="cdur">${b.count} clip${b.count === 1 ? "" : "s"}</div>
+    </div>
+    <div class="cmeta">
+      <div class="ctime">${esc(b.name)}</div>
+      ${b.latin ? `<div class="clatin">${esc(b.latin)}</div>` : ""}
+      <div class="clast">last ${last.toLocaleDateString([], { month: "short", day: "numeric" })} ${last.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+    </div>`;
+  el.addEventListener("click", () => showBirdClips(b));
+  return el;
+}
+
+function showBirdClips(b) {
+  stopClip(); birdSel = b;
+  $("#stage-name").textContent = b.name;
+  $("#video-wrap").classList.add("hidden");
+  $("#rec-panel").classList.remove("hidden"); $("#bird-bar").classList.remove("hidden");
+  $("#bird-count").textContent = `${b.count} clip${b.count === 1 ? "" : "s"}${b.latin ? " · " + b.latin : ""}`;
+  setState("birds", false);
+  const list = $("#rec-list");
+  list.innerHTML = "";
+  for (const c of b.clips) {
+    if (c.file) list.appendChild(clipTile(c, c.thumb && archiveUrl(c.thumb), fmtSize(c.size), () => playArchived(c)));
+    else list.appendChild(clipTile(c, c.thumb, `${c.duration}s`, () => playClip(c)));
+  }
+}
+
 // ---------- wiring ----------
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
-$("#clip-back").addEventListener("click", () => (currentCam ? setTab("rec") : showArchiveList()));
+$("#clip-back").addEventListener("click", () => {
+  if (view === "cam") setTab("rec");
+  else if (view === "birds") (birdSel ? showBirdClips(birdSel) : showBirdsList());
+  else showArchiveList();
+});
 $("#archive-btn").addEventListener("click", openArchive);
 $("#arc-month").addEventListener("change", showArchiveList);
+$("#birds-btn").addEventListener("click", openBirds);
+$("#bird-back").addEventListener("click", showBirdsList);
 $("#stage-close").addEventListener("click", closeStage);
 $("#stage").addEventListener("click", (e) => { if (e.target.id === "stage") closeStage(); });
 $("#fullscreen").addEventListener("click", toggleFullscreen);
@@ -934,7 +1012,7 @@ $("#debug-clear").addEventListener("click", () => { $("#debug-log").textContent 
 $("#debug-copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#debug-log").textContent); toast("Debug log copied"); } catch { toast("Copy failed"); }
 });
-$("#refresh").addEventListener("click", () => { loadCameras(true); loadArchive(); });
+$("#refresh").addEventListener("click", () => { loadCameras(true); loadArchive(); loadBirds(); });
 
 // live controls
 $("#light-btn").addEventListener("click", toggleLight);
