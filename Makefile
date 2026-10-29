@@ -4,7 +4,7 @@ PY ?= python3
 .PHONY: check test run docker docker-build publish-image
 
 check: test
-	$(PY) -m py_compile vico_server.py vico_signaling.py vico_sdp.py vico_api.py
+	$(PY) -m py_compile vico_server.py vico_signaling.py vico_sdp.py vico_api.py vico_archive.py vico_pull.py
 	bash -n packaging/publish-image.sh
 	@echo "check: ok"
 

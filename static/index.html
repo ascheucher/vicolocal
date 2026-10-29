@@ -36,6 +36,7 @@
     </div>
     <div class="controls">
       <button id="refresh" class="btn icon" title="Refresh cameras" aria-label="Refresh">&#x21bb;</button>
+      <button id="archive-btn" class="btn icon hidden" title="Archived clips" aria-label="Archive">&#x1f4fc;</button>
       <div class="select-wrap">
         <select id="theme" aria-label="Theme">
           <option value="dark">Dark</option>
@@ -99,7 +100,13 @@
         <span id="clip-meta" class="clip-meta"></span>
         <a id="clip-dl" class="btn sm" href="#" download>&#x2b07; download</a>
       </div>
-      <div id="rec-panel" class="rec-panel hidden"><div id="rec-list" class="rec-list"></div></div>
+      <div id="rec-panel" class="rec-panel hidden">
+        <div id="arc-bar" class="arc-bar hidden">
+          <div class="select-wrap"><select id="arc-month" aria-label="Month"></select></div>
+          <span id="arc-count" class="arc-count"></span>
+        </div>
+        <div id="rec-list" class="rec-list"></div>
+      </div>
       <section id="debug" class="debug hidden">
         <div class="debug-head">
           <span>Debug console</span>
