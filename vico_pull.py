@@ -51,10 +51,10 @@ def save_thumb(url: str, dest: Path):
 
 def download(url: str, dest: Path) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".part")
+    tmp = dest.with_suffix(".part")   # not .mp4, so a half-written file is never listed
     try:
         r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", url,
-                            "-c", "copy", "-movflags", "+faststart", str(tmp)], timeout=300)
+                            "-c", "copy", "-movflags", "+faststart", "-f", "mp4", str(tmp)], timeout=300)
         ok = r.returncode == 0 and tmp.stat().st_size > 0
     except (subprocess.TimeoutExpired, OSError) as e:
         print(f"ffmpeg: {e}", file=sys.stderr, flush=True)
