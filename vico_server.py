@@ -18,6 +18,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from vico_api import VicoCloud
+from vico_archive import archive_file, list_archive
 from vico_signaling import CameraError, CameraLink
 
 __version__ = "0.2.1"
@@ -38,7 +39,10 @@ CONFIG = {
     "batteryWarn": os.environ.get("VICO_BATTERY_WARN", "1") not in ("0", "false", "no", "off"),
     # live-view camera controls: pan/tilt, white light, talk (MagicPix is viewer-side, always on)
     "controls": os.environ.get("VICO_CONTROLS", "1") not in ("0", "false", "no", "off"),
+    # local archive of downloaded clips (see vico_archive.py / vico_pull.py); off unless a directory is set
+    "archive": bool(os.environ.get("VICO_ARCHIVE_DIR")),
 }
+ARCHIVE_DIR = Path(os.environ["VICO_ARCHIVE_DIR"]).resolve() if CONFIG["archive"] else None
 
 # Cache-busting token for CSS/JS/icons; changes each container start unless pinned via env
 # (so a browser like the Fire's doesn't keep serving a stale title/favicon after a redeploy).
@@ -178,6 +182,21 @@ async def api_clip_download(request):
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+async def api_archive(request):
+    """Archived clips on disk, newest first; no cloud call. [] unless VICO_ARCHIVE_DIR is set."""
+    files = await asyncio.get_running_loop().run_in_executor(None, list_archive, ARCHIVE_DIR)
+    return web.json_response(files)
+
+
+async def api_archive_file(request):
+    """One archived clip or thumbnail (`path` as listed by /api/archive); ranges work, so the
+    browser can seek. Anything outside the archive directory is a 404."""
+    path = archive_file(ARCHIVE_DIR, request.query.get("path", ""))
+    if path is None:
+        return web.Response(status=404, text="no such clip")
+    return web.FileResponse(path)
+
+
 async def ws_stream(request):
     """Bridge one browser stream to a camera."""
     serial = request.match_info["serial"]
@@ -284,6 +303,8 @@ def make_app():
     app.router.add_get("/api/cameras", api_cameras)
     app.router.add_get("/api/clips", api_clips)
     app.router.add_get("/api/clip/download", api_clip_download)
+    app.router.add_get("/api/archive", api_archive)
+    app.router.add_get("/api/archive/file", api_archive_file)
     app.router.add_get("/ws/{serial}", ws_stream)
     app.router.add_static("/static/", STATIC, show_index=False)
     return app

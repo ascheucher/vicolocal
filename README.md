@@ -19,6 +19,8 @@ media). This project is a tiny signaling bridge plus a dashboard that does exact
   It runs in your browser, so it costs the camera nothing; it's remembered per camera.
 - **Recordings** — browse the cloud event clips (motion), play them in-page (HLS), and
   **download** them as mp4.
+- **Archive** — the cloud keeps clips only a few days; `vico_pull.py` downloads them to a
+  directory on your server and the page lists and plays them from there, by month.
 - **Snapshot tiles** refreshed from the cloud (~every 30 min) at **no battery cost**.
 - **Battery-aware** — shows charge level and warns when you're streaming a camera that's
   running on battery (not plugged in).
@@ -101,7 +103,30 @@ the same network as the cameras** (or you'll fall back to the cloud TURN relay).
 | `VICO_SIMPLE` | off | kid/kiosk mode (big tiles, no theme/debug chrome) |
 | `VICO_BATTERY_WARN` | on | show the on-battery streaming warning |
 | `VICO_CONTROLS` | on | live-view controls: pan/tilt, white light, talk (MagicPix is always offered) |
+| `VICO_ARCHIVE_DIR` | — | directory of archived clips (see below); unset = no Archive button |
 | `VICO_HOST` / `VICO_PORT` | `0.0.0.0` / `8080` | bind address/port |
+
+### Archive: keep clips past the cloud's few days
+
+The cloud Library is a rolling window (3 days on the free plan). `vico_pull.py` downloads
+every clip of the last days as mp4 (ffmpeg remux, no re-encode) plus its thumbnail, skips
+what it already has, and exits non-zero when a download failed — so a daily run never misses
+a clip and can alert from cron. With `VICO_ARCHIVE_DIR` set, the page shows an **Archive**
+button (once the directory has something in it) that lists the files by month and plays them
+straight from the server, no cloud involved.
+
+```bash
+# in the container: --out defaults to VICO_ARCHIVE_DIR
+docker exec catcams python vico_pull.py --days 3
+# locally, with the same credentials as the dashboard
+python vico_pull.py --days 3 --out ./clips [--dry-run]
+```
+
+Files land as `<dir>/<YYYY-MM>/<YYYY-MM-DD_HH-MM-SS>_<tags>_<id>.mp4` (`.jpg` beside it);
+any other `.mp4` you put under the directory is listed too, by its modification time. In
+`docker-compose.yml`, uncomment `VICO_ARCHIVE_DIR` and the `catcams-clips` volume (or bind-mount
+a NAS path) and add a cron entry on the host, e.g. `15 4 * * * docker exec catcams python
+vico_pull.py --days 3`.
 
 ## Notes & limits
 

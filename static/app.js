@@ -8,7 +8,7 @@ const LS = { get: (k) => { try { return localStorage.getItem(k); } catch { retur
              set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 // ---------- config (env-settable via /api/config) ----------
-let CFG = { batteryWarn: true, simple: false, controls: true };
+let CFG = { batteryWarn: true, simple: false, controls: true, archive: false };
 async function loadConfig() {
   try {
     const c = await (await fetch("/api/config")).json();
@@ -20,6 +20,7 @@ async function loadConfig() {
     if (c.accent2) document.documentElement.style.setProperty("--accent2", c.accent2);
     if (c.simple) document.body.classList.add("simple");
   } catch {}
+  loadArchive();
 }
 
 // ---------- theme ----------
@@ -609,6 +610,7 @@ function openCamera(cam) {
   currentCam = cam;
   $("#stage").classList.remove("hidden");
   $("#stage-name").textContent = cam.name;
+  $(".stage-tabs").classList.remove("hidden"); $("#arc-bar").classList.add("hidden");
   if (!zoomer) zoomer = setupZoom($("#video-wrap"), [$("#video"), $("#magic-canvas")], $("#zoom-badge"));
   setTab(cam.online ? "live" : "rec");
 }
@@ -801,21 +803,25 @@ async function loadClips(serial) {
   if (clips.error) { list.innerHTML = `<div class="rec-empty">${esc(clips.error)}</div>`; return; }
   if (!clips.length) { list.innerHTML = '<div class="rec-empty">no recordings in the last few days</div>'; return; }
   list.innerHTML = "";
-  for (const c of clips) {
-    const el = document.createElement("div"); el.className = "clip";
-    const t = new Date(c.time * 1000);
-    el.innerHTML = `
-      <div class="cthumb" ${c.thumb ? `style="background-image:url('${c.thumb}')"` : ""}>
-        <div class="cplay">&#x25b6;</div>
-        <div class="cdur">${c.duration}s</div>
-      </div>
-      <div class="cmeta">
-        <div class="ctime">${t.toLocaleDateString([], { month: "short", day: "numeric" })} ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
-        ${c.tags && c.tags.length ? `<div class="ctags">${esc(c.tags.join(", "))}</div>` : ""}
-      </div>`;
-    el.addEventListener("click", () => playClip(c));
-    list.appendChild(el);
-  }
+  for (const c of clips) list.appendChild(clipTile(c, c.thumb, `${c.duration}s`, () => playClip(c)));
+}
+
+// One tile in a clip grid (cloud recordings and the archive share it).
+function clipTile(c, thumb, badge, onClick) {
+  const el = document.createElement("div"); el.className = "clip";
+  const t = new Date(c.time * 1000);
+  el.innerHTML = `
+    <div class="cthumb" ${thumb ? `style="background-image:url('${thumb}')"` : ""}>
+      ${thumb ? "" : '<div class="cnoimg">&#x1f39e;&#xfe0f;</div>'}
+      <div class="cplay">&#x25b6;</div>
+      <div class="cdur">${esc(badge)}</div>
+    </div>
+    <div class="cmeta">
+      <div class="ctime">${t.toLocaleDateString([], { month: "short", day: "numeric" })} ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+      ${c.tags && c.tags.length ? `<div class="ctags">${esc(c.tags.join(", "))}</div>` : ""}
+    </div>`;
+  el.addEventListener("click", onClick);
+  return el;
 }
 
 function playClip(c) {
@@ -831,6 +837,7 @@ function playClip(c) {
   $("#clip-meta").textContent = `${t.toLocaleString()} · ${c.duration}s`;
   $("#clip-dl").href = `/api/clip/download?url=${encodeURIComponent(c.video)}&name=` +
     encodeURIComponent(`${currentCam.name || "clip"} ${t.toISOString().slice(0, 16).replace("T", " ")}`);
+  $("#clip-dl").download = "";
   if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = c.video; v.play().catch(() => {}); }
   else if (window.Hls && Hls.isSupported()) {
     hls = new Hls({ maxBufferLength: 20 });
@@ -847,9 +854,73 @@ function stopClip() {
   $("#clip-bar").classList.add("hidden");
 }
 
+// ---------- local archive ----------
+// Clips the server keeps on disk (VICO_ARCHIVE_DIR, filled by vico_pull.py) outlive the cloud's
+// few days. They open from the header button, which only shows when there is something in it,
+// in the same stage as a camera but without the Live/Recordings tabs; a month filter narrows
+// the list. Playback is a plain mp4 from this server, no cloud involved.
+let archive = [];
+async function loadArchive() {
+  if (!CFG.archive) return;
+  try { archive = await (await fetch("/api/archive")).json(); } catch { archive = []; }
+  if (!Array.isArray(archive)) archive = [];
+  $("#archive-btn").classList.toggle("hidden", !archive.length);
+}
+const archiveUrl = (file) => "/api/archive/file?path=" + encodeURIComponent(file);
+const monthOf = (c) => { const d = new Date(c.time * 1000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+function fmtSize(b) { return b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.round(b / 1e3) + " kB"; }
+
+function openArchive() {
+  closeStream(); stopClip();
+  currentCam = null;
+  $("#stage").classList.remove("hidden");
+  $("#stage-name").textContent = "Archive";
+  $(".stage-tabs").classList.add("hidden");
+  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+  if (!zoomer) zoomer = setupZoom($("#video-wrap"), [$("#video"), $("#magic-canvas")], $("#zoom-badge"));
+  updateSoundBtn(false, false); updateLiveBar();
+  $("#battery-warn").classList.add("hidden");
+  const sel = $("#arc-month"), months = [...new Set(archive.map(monthOf))];
+  sel.innerHTML = `<option value="">All months</option>` + months.map((m) => {
+    const d = new Date(m + "-15T12:00:00");
+    return `<option value="${m}">${d.toLocaleDateString([], { month: "short", year: "numeric" })}</option>`;
+  }).join("");
+  showArchiveList();
+}
+
+function showArchiveList() {
+  stopClip();
+  $("#video-wrap").classList.add("hidden");
+  $("#rec-panel").classList.remove("hidden"); $("#arc-bar").classList.remove("hidden");
+  setState("archive", false);
+  const month = $("#arc-month").value, list = $("#rec-list");
+  const clips = month ? archive.filter((c) => monthOf(c) === month) : archive;
+  $("#arc-count").textContent = `${clips.length} clip${clips.length === 1 ? "" : "s"}`;
+  list.innerHTML = "";
+  if (!clips.length) { list.innerHTML = '<div class="rec-empty">nothing archived yet</div>'; return; }
+  for (const c of clips) list.appendChild(clipTile(c, c.thumb && archiveUrl(c.thumb), fmtSize(c.size), () => playArchived(c)));
+}
+
+function playArchived(c) {
+  stopClip();
+  $("#rec-panel").classList.add("hidden");
+  $("#video-wrap").classList.remove("hidden");
+  $("#clip-bar").classList.remove("hidden");
+  $("#spinner").classList.add("hidden");
+  zoomer && zoomer.reset();
+  const v = $("#video"), url = archiveUrl(c.file);
+  v.srcObject = null; v.muted = false; v.controls = true;
+  const t = new Date(c.time * 1000);
+  $("#clip-meta").textContent = `${t.toLocaleString()} · ${fmtSize(c.size)}`;
+  $("#clip-dl").href = url; $("#clip-dl").download = c.file.split("/").pop();
+  v.src = url; v.play().catch(() => {});
+}
+
 // ---------- wiring ----------
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
-$("#clip-back").addEventListener("click", () => setTab("rec"));
+$("#clip-back").addEventListener("click", () => (currentCam ? setTab("rec") : showArchiveList()));
+$("#archive-btn").addEventListener("click", openArchive);
+$("#arc-month").addEventListener("change", showArchiveList);
 $("#stage-close").addEventListener("click", closeStage);
 $("#stage").addEventListener("click", (e) => { if (e.target.id === "stage") closeStage(); });
 $("#fullscreen").addEventListener("click", toggleFullscreen);
@@ -863,7 +934,7 @@ $("#debug-clear").addEventListener("click", () => { $("#debug-log").textContent 
 $("#debug-copy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("#debug-log").textContent); toast("Debug log copied"); } catch { toast("Copy failed"); }
 });
-$("#refresh").addEventListener("click", () => loadCameras(true));
+$("#refresh").addEventListener("click", () => { loadCameras(true); loadArchive(); });
 
 // live controls
 $("#light-btn").addEventListener("click", toggleLight);

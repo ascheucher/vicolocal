@@ -1,12 +1,16 @@
 # vicolocal tasks. There is no CI: run `make check` before you push.
 PY ?= python3
 
-.PHONY: check run docker docker-build publish-image
+.PHONY: check test run docker docker-build publish-image
 
-check:
-	$(PY) -m py_compile vico_server.py vico_signaling.py vico_sdp.py vico_api.py
+check: test
+	$(PY) -m py_compile vico_server.py vico_signaling.py vico_sdp.py vico_api.py vico_archive.py vico_pull.py
 	bash -n packaging/publish-image.sh
 	@echo "check: ok"
+
+# Unit tests (needs requirements.txt installed; nothing talks to the cloud).
+test:
+	$(PY) -m unittest discover -s tests -t .
 
 # Run the dashboard locally (needs requirements.txt installed and a .vico.env or VICO_* env).
 run:

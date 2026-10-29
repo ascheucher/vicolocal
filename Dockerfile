@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY vico_server.py vico_signaling.py vico_sdp.py vico_api.py ./
+COPY vico_server.py vico_signaling.py vico_sdp.py vico_api.py vico_archive.py vico_pull.py ./
 COPY static ./static
 RUN mkdir -p /data
 
