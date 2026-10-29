@@ -94,6 +94,7 @@ the same network as the cameras** (or you'll fall back to the cloud TURN relay).
 |-----|---------|---------|
 | `VICO_USER2` / `VICO_PASS2` | — | view-only account credentials (or mount `.vico.env`) |
 | `VICO_ACCOUNT` | `2` | which account suffix in `.vico.env` to use |
+| `VICOHOME_API` | `https://api-us.vicohome.io` | cloud API region; EU accounts use `https://api-eu.vicohome.io` |
 | `VICO_TITLE` | `Vicolocal` | heading / page title |
 | `VICO_TAGLINE` | `LAN camera feeds` | sub-heading |
 | `VICO_THEME` | `dark` | default theme (`dark`/`midnight`/`terminal`/`daylight`) |

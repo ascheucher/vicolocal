@@ -17,7 +17,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
-from vico_api import VicoCloud
+from vico_api import API, VicoCloud
 from vico_signaling import CameraError, CameraLink
 
 __version__ = "0.2.1"
@@ -155,7 +155,7 @@ async def api_clip_download(request):
     from urllib.parse import urlparse
     url = request.query.get("url", "")
     name = (request.query.get("name") or "clip").replace('"', "") + ".mp4"
-    if urlparse(url).hostname not in ("api-us.vicohome.io",):
+    if urlparse(url).hostname != urlparse(API).hostname:   # only the configured cloud region
         return web.Response(status=400, text="invalid url")
     if not shutil.which("ffmpeg"):
         return web.Response(status=501, text="ffmpeg not installed")
