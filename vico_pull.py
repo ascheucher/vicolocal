@@ -2,9 +2,12 @@
 directory the dashboard lists under "Archive" (VICO_ARCHIVE_DIR, see vico_archive.py).
 
 The cloud holds clips only a few days (3 on the free plan), so a daily run with --days 3
-never misses one. It is idempotent: a clip whose file exists is skipped, so re-runs cost one
-API call. ffmpeg remuxes the HLS stream to mp4 (no re-encode), and the clip's thumbnail is
-saved beside it as .jpg. Exit status 1 when any clip failed, for the cron job to alert on.
+never misses one. It is idempotent: a clip whose file exists is not downloaded again, so
+re-runs cost one API call. ffmpeg remuxes the HLS stream to mp4 (no re-encode); beside the clip
+go its thumbnail (.jpg), what the cloud said about it (.json: trace, time, tags, identified bird
+species) and the crop of that bird (.bird.jpg) — these sidecars are also added to clips archived
+before they existed, as long as the cloud still lists the clip. Exit status 1 when any clip
+failed, for the cron job to alert on.
 
     python vico_pull.py --days 3 --out /clips [--dry-run]
     docker exec vicolocal python vico_pull.py --days 3        # container: --out defaults to VICO_ARCHIVE_DIR
@@ -12,6 +15,7 @@ saved beside it as .jpg. Exit status 1 when any clip failed, for the cron job to
 Credentials as for the dashboard: VICO_USER2/VICO_PASS2 (or .vico.env), VICO_ACCOUNT picks the suffix.
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -23,6 +27,7 @@ import requests
 
 from vico_api import VicoCloud
 from vico_archive import clip_path
+from vico_birds import species_of
 
 ACCOUNT = os.environ.get("VICO_ACCOUNT", "2")
 PAGE = 60   # the library endpoint's page size
@@ -66,6 +71,24 @@ def download(url: str, dest: Path) -> bool:
     return ok
 
 
+def keep_sidecars(dest: Path, clip: dict) -> int:
+    """Write the clip's .json (and the bird crop, when the cloud identified one) next to an
+    archived clip unless they are there already. Returns how many files were added."""
+    added = 0
+    meta, species = dest.with_suffix(".json"), species_of(clip)
+    if not meta.exists():
+        meta.write_text(json.dumps({
+            "trace": clip.get("traceId"), "time": clip.get("timestamp"), "period": clip.get("period"),
+            "tags": clip.get("tags") or "", "species": species and {"name": species["name"], "latin": species["latin"]},
+        }, ensure_ascii=False))
+        added += 1
+    crop = dest.with_suffix(".bird.jpg")
+    if species and species.get("image") and not crop.exists():
+        save_thumb(species["image"], crop)
+        added += crop.exists()
+    return added
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="download the cloud recordings of the last days")
     ap.add_argument("--days", type=int, default=3)
@@ -78,26 +101,28 @@ def main(argv=None):
 
     vc = VicoCloud.from_env_file(account=ACCOUNT)
     clips = fetch_clips(vc, a.days)
-    new = failed = 0
+    new = failed = sidecars = 0
     for c in clips:
         url, trace = c.get("videoUrl"), c.get("traceId")
         if not url or not trace:
             continue
         when = datetime.fromtimestamp(c.get("timestamp") or 0)
         dest = clip_path(a.out, when, c.get("tags") or "", trace)
-        if dest.exists():
-            continue
-        print(f"get {dest.relative_to(a.out)} ({c.get('period') or 0:.0f}s)", flush=True)
-        if a.dry_run:
-            continue
-        if download(url, dest):
+        if not dest.exists():
+            print(f"get {dest.relative_to(a.out)} ({c.get('period') or 0:.0f}s)", flush=True)
+            if a.dry_run:
+                continue
+            if not download(url, dest):
+                failed += 1
+                print(f"FAILED {trace}", file=sys.stderr, flush=True)
+                continue
             new += 1
             if c.get("imageUrl"):
                 save_thumb(c["imageUrl"], dest.with_suffix(".jpg"))
-        else:
-            failed += 1
-            print(f"FAILED {trace}", file=sys.stderr, flush=True)
-    print(f"{len(clips)} clips in the last {a.days} d, {new} downloaded, {failed} failed", flush=True)
+        if not a.dry_run:
+            sidecars += keep_sidecars(dest, c)
+    print(f"{len(clips)} clips in the last {a.days} d, {new} downloaded, {failed} failed, "
+          f"{sidecars} sidecar files added", flush=True)
     return 1 if failed else 0
 
 

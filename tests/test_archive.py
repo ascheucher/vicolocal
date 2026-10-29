@@ -1,4 +1,5 @@
 """vico_archive: file naming, listing and the path check behind /api/archive/file."""
+import json
 import os
 import tempfile
 import unittest
@@ -59,9 +60,27 @@ class ListArchiveTest(unittest.TestCase):
         self.assertEqual(first["tags"], ["bird", "small animal"])
         self.assertEqual(first["size"], 3)
         self.assertEqual(first["thumb"], "2026-10/2026-10-29_14-05-09_bird+small-animal_t1.jpg")
+        self.assertEqual(first["trace"], "t1")
+        self.assertIsNone(first["species"])
+        self.assertIsNone(first["bird"])
         self.assertEqual(files[1]["tags"], [])
         self.assertIsNone(files[1]["thumb"])
         self.assertEqual(files[2]["time"], 0)   # unknown naming: modification time
+        self.assertIsNone(files[2]["trace"])
+
+    def test_sidecar_gives_species_trace_and_bird_crop(self):
+        self._touch("2026-10/2026-10-29_14-05-09_bird_t1.mp4")
+        self._touch("2026-10/2026-10-29_14-05-09_bird_t1.bird.jpg")
+        self._touch("2026-10/2026-10-29_14-05-09_bird_t1.json", json.dumps(
+            {"trace": "0797t1", "species": {"name": "Great Tit", "latin": "Parus major"}}).encode())
+        self._touch("2026-10/2026-10-29_14-06-09_bird_t2.mp4")
+        self._touch("2026-10/2026-10-29_14-06-09_bird_t2.json", b"{not json")
+        files = list_archive(self.root)
+        self.assertEqual(files[1]["trace"], "0797t1")
+        self.assertEqual(files[1]["species"], {"name": "Great Tit", "latin": "Parus major"})
+        self.assertEqual(files[1]["bird"], "2026-10/2026-10-29_14-05-09_bird_t1.bird.jpg")
+        self.assertEqual(files[0]["trace"], "t2")     # broken sidecar: back to the filename
+        self.assertIsNone(files[0]["species"])
 
     def test_archive_file_accepts_clips_and_thumbnails(self):
         clip = self._touch("2026-10/a.mp4")

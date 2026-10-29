@@ -148,6 +148,9 @@ html.tile-drag .thumb .play { opacity: 0; }
 .clip .ctags { color: var(--muted); font-size: 11px; margin-top: 2px; text-transform: capitalize; }
 .clip .cnoimg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 26px; opacity: .6; }
 .rec-empty { padding: 36px; text-align: center; color: var(--muted); grid-column: 1 / -1; }
+.clip.bird .cthumb { aspect-ratio: 4/3; }
+.clip .clatin { color: var(--muted); font-size: 11px; font-style: italic; margin-top: 2px; }
+.clip .clast { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .arc-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg2); position: sticky; top: 0; z-index: 1; }
 .arc-count { color: var(--muted); font-size: 12.5px; }
 .clip-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--bg2); }

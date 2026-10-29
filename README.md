@@ -21,6 +21,8 @@ media). This project is a tiny signaling bridge plus a dashboard that does exact
   **download** them as mp4.
 - **Archive** — the cloud keeps clips only a few days; `vico_pull.py` downloads them to a
   directory on your server and the page lists and plays them from there, by month.
+- **Birds** — who visited: the species the cloud identified (bird-feeder cameras), each with
+  a picture and its clips; with the archive, the list keeps growing past the cloud's window.
 - **Snapshot tiles** refreshed from the cloud (~every 30 min) at **no battery cost**.
 - **Battery-aware** — shows charge level and warns when you're streaming a camera that's
   running on battery (not plugged in).
@@ -122,11 +124,22 @@ docker exec catcams python vico_pull.py --days 3
 python vico_pull.py --days 3 --out ./clips [--dry-run]
 ```
 
-Files land as `<dir>/<YYYY-MM>/<YYYY-MM-DD_HH-MM-SS>_<tags>_<id>.mp4` (`.jpg` beside it);
-any other `.mp4` you put under the directory is listed too, by its modification time. In
+Files land as `<dir>/<YYYY-MM>/<YYYY-MM-DD_HH-MM-SS>_<tags>_<id>.mp4` with the thumbnail
+(`.jpg`), what the cloud said about the clip (`.json`: trace, time, tags, identified bird) and
+the crop of that bird (`.bird.jpg`) beside it; the sidecars are added to clips archived
+earlier, as long as the cloud still lists them. Any other `.mp4` you put under the directory
+is listed too, by its modification time. In
 `docker-compose.yml`, uncomment `VICO_ARCHIVE_DIR` and the `catcams-clips` volume (or bind-mount
 a NAS path) and add a cron entry on the host, e.g. `15 4 * * * docker exec catcams python
 vico_pull.py --days 3`.
+
+### Birds: who visited
+
+Bird-feeder cameras get species identification in the cloud (the app's bird list). Every
+clip's record names the bird (common and Latin name) and links a crop of it, and the page
+groups the last days' clips and the whole archive by species under the **Birds** button
+(`/api/birds`), shown once a bird has been identified. Each species opens its clips. Nothing
+to configure; without an archive it is the cloud's window only.
 
 ## Notes & limits
 

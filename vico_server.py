@@ -19,6 +19,7 @@ from aiohttp import WSMsgType, web
 
 from vico_api import VicoCloud
 from vico_archive import archive_file, list_archive
+from vico_birds import group_by_species, merge_by_trace, species_of
 from vico_signaling import CameraError, CameraLink
 
 __version__ = "0.2.1"
@@ -138,6 +139,7 @@ def _fetch_clips(serial, days):
             "thumb": e.get("imageUrl"),
             "video": e.get("videoUrl"),       # HLS .m3u8 (CORS * -> browser plays directly)
             "tags": [t for t in (e.get("tags") or "").split(",") if t],  # actual detections
+            "species": species_of(e),         # identified bird {name, latin, image}, or None
         })
     return out
 
@@ -186,6 +188,23 @@ async def api_archive(request):
     """Archived clips on disk, newest first; no cloud call. [] unless VICO_ARCHIVE_DIR is set."""
     files = await asyncio.get_running_loop().run_in_executor(None, list_archive, ARCHIVE_DIR)
     return web.json_response(files)
+
+
+def _birds(days):
+    """Identified birds across the cloud's last `days` and the whole archive (see vico_birds.py).
+    When the cloud can't be asked, the archive alone is returned and `error` says why."""
+    archived, error = list_archive(ARCHIVE_DIR), None
+    try:
+        cloud = _fetch_clips(None, days)
+    except Exception as e:  # noqa: BLE001
+        cloud, error = [], str(e)
+    return {"species": group_by_species(merge_by_trace(archived, cloud)), "error": error}
+
+
+async def api_birds(request):
+    days = max(1, min(30, int(request.query.get("days", "3"))))
+    data = await asyncio.get_running_loop().run_in_executor(None, _birds, days)
+    return web.json_response(data)
 
 
 async def api_archive_file(request):
@@ -305,6 +324,7 @@ def make_app():
     app.router.add_get("/api/clip/download", api_clip_download)
     app.router.add_get("/api/archive", api_archive)
     app.router.add_get("/api/archive/file", api_archive_file)
+    app.router.add_get("/api/birds", api_birds)
     app.router.add_get("/ws/{serial}", ws_stream)
     app.router.add_static("/static/", STATIC, show_index=False)
     return app
